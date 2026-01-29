@@ -1,0 +1,311 @@
+{
+  "flow_name": "Janssen_Unified_Agent_Flow",
+  "version": "1.0.0",
+  "status": "blueprint",
+  "description": "Unified conversation flow for all Janssen AI agents across all channels (chat, voice, WhatsApp).",
+  "supported_channels": ["chat", "voice", "whatsapp", "web"],
+  "supported_languages": ["ar", "en"],
+  "default_language": "ar",
+  "notes": [
+    "This is a BLUEPRINT - not directly executable",
+    "Describes the logical flow between agents",
+    "Channel-agnostic: same flow for all input sources"
+  ],
+  "entry_point": "receive_message",
+  "flow_steps": [
+    {
+      "id": "receive_message",
+      "name": "Receive Message",
+      "type": "input",
+      "description": "Entry point for all incoming customer messages from any channel.",
+      "input": {
+        "session_id": "string",
+        "message": "string",
+        "channel": "chat | voice | whatsapp",
+        "language": "ar | en",
+        "phone": "string (optional)",
+        "metadata": "object (optional)"
+      },
+      "output": {
+        "normalized_input": "object"
+      },
+      "next": "detect_language"
+    },
+    {
+      "id": "detect_language",
+      "name": "Detect Language",
+      "type": "processing",
+      "description": "Automatically detect if message is Arabic or English if not specified.",
+      "input": {
+        "message": "string",
+        "provided_language": "ar | en | null"
+      },
+      "output": {
+        "detected_language": "ar | en",
+        "confidence": "number"
+      },
+      "logic": {
+        "ar_indicators": ["Arabic characters", "common Arabic words"],
+        "en_indicators": ["Latin characters", "common English words"],
+        "default": "ar"
+      },
+      "next": "detect_intent"
+    },
+    {
+      "id": "detect_intent",
+      "name": "Detect Intent",
+      "type": "processing",
+      "description": "Classify customer intent using keyword matching or AI model.",
+      "input": {
+        "message": "string",
+        "language": "ar | en",
+        "conversation_history": "array (optional)"
+      },
+      "output": {
+        "intent": "string",
+        "confidence": "number",
+        "entities": "array"
+      },
+      "intent_categories": [
+        "SALES_PRICE",
+        "SALES_RECOMMENDATION",
+        "DELIVERY",
+        "WARRANTY",
+        "COMPLAINT",
+        "HUMAN_REQUEST",
+        "GENERAL"
+      ],
+      "next": "route_to_agent"
+    },
+    {
+      "id": "route_to_agent",
+      "name": "Route to Agent",
+      "type": "routing",
+      "description": "Select appropriate agent based on detected intent.",
+      "input": {
+        "intent": "string",
+        "confidence": "number"
+      },
+      "output": {
+        "selected_agent": "string",
+        "agent_config": "object"
+      },
+      "routing_table": {
+        "SALES_PRICE": "sales",
+        "SALES_RECOMMENDATION": "sales",
+        "DELIVERY": "support",
+        "WARRANTY": "warranty",
+        "COMPLAINT": "complaint",
+        "HUMAN_REQUEST": "escalation",
+        "GENERAL": "support"
+      },
+      "default_agent": "support",
+      "next": "load_agent_config"
+    },
+    {
+      "id": "load_agent_config",
+      "name": "Load Agent Config",
+      "type": "processing",
+      "description": "Load the selected agent's configuration including tone, allowed actions, and escalation rules.",
+      "input": {
+        "agent_name": "string"
+      },
+      "output": {
+        "agent_config": "object",
+        "tone": "object",
+        "allowed_actions": "array",
+        "forbidden_actions": "array",
+        "escalation_rules": "object"
+      },
+      "agent_files": {
+        "sales": "agents/sales.agent.json",
+        "support": "agents/support.agent.json",
+        "warranty": "agents/warranty.agent.json",
+        "complaint": "agents/complaint.agent.json",
+        "escalation": "agents/escalation.agent.json"
+      },
+      "next": "check_escalation"
+    },
+    {
+      "id": "check_escalation",
+      "name": "Check Escalation Conditions",
+      "type": "decision",
+      "description": "Evaluate if escalation to human is required based on agent rules.",
+      "input": {
+        "intent": "string",
+        "message": "string",
+        "agent_config": "object",
+        "conversation_history": "array"
+      },
+      "output": {
+        "escalation_required": "boolean",
+        "escalation_reason": "string"
+      },
+      "conditions": [
+        "Customer explicitly requests human",
+        "Complaint with negative sentiment",
+        "Legal or media threat",
+        "Agent cannot answer after 3 attempts",
+        "Sensitive topic detected"
+      ],
+      "branches": {
+        "true": "escalate_to_human",
+        "false": "fetch_knowledge"
+      }
+    },
+    {
+      "id": "fetch_knowledge",
+      "name": "Fetch Knowledge",
+      "type": "processing",
+      "description": "Retrieve relevant information from knowledge base based on intent.",
+      "input": {
+        "intent": "string",
+        "message": "string",
+        "agent_data_requirements": "array"
+      },
+      "output": {
+        "products": "array",
+        "prices": "array",
+        "policies": "array",
+        "faq_matches": "array"
+      },
+      "data_sources": {
+        "sales": ["products", "prices", "promotions"],
+        "support": ["delivery_rules", "store_locations", "faq"],
+        "warranty": ["warranty_policies", "service_centers"],
+        "complaint": ["complaint_categories", "resolution_sla"]
+      },
+      "next": "apply_business_rules"
+    },
+    {
+      "id": "apply_business_rules",
+      "name": "Apply Business Rules",
+      "type": "processing",
+      "description": "Enforce Janssen business rules before response generation.",
+      "input": {
+        "agent_config": "object",
+        "intent": "string",
+        "knowledge": "object"
+      },
+      "output": {
+        "rules_applied": "array",
+        "blocked_actions": "array",
+        "allowed_to_respond": "boolean"
+      },
+      "rules": [
+        "Never invent prices - use database only",
+        "Never promise specific delivery times",
+        "Never approve/reject warranty claims",
+        "Never offer unauthorized discounts",
+        "Always use configured tone for language"
+      ],
+      "next": "generate_response"
+    },
+    {
+      "id": "generate_response",
+      "name": "Generate Response",
+      "type": "processing",
+      "description": "Generate AI response using agent config, knowledge, and business rules.",
+      "input": {
+        "message": "string",
+        "agent_config": "object",
+        "knowledge": "object",
+        "business_rules": "object",
+        "language": "ar | en"
+      },
+      "output": {
+        "response_text": "string",
+        "response_type": "text | product_card | quick_replies",
+        "attachments": "array (optional)"
+      },
+      "tone_application": {
+        "ar": "Egyptian Arabic, natural and conversational",
+        "en": "Professional, friendly, clear"
+      },
+      "next": "format_output"
+    },
+    {
+      "id": "format_output",
+      "name": "Format Output",
+      "type": "processing",
+      "description": "Format response for the specific channel (chat, voice, WhatsApp).",
+      "input": {
+        "response": "object",
+        "channel": "string"
+      },
+      "output": {
+        "formatted_response": "object"
+      },
+      "channel_formatting": {
+        "chat": "HTML with product cards",
+        "voice": "Plain text for TTS",
+        "whatsapp": "WhatsApp message template"
+      },
+      "next": "log_interaction"
+    },
+    {
+      "id": "log_interaction",
+      "name": "Log Interaction",
+      "type": "processing",
+      "description": "Log the interaction for analytics and conversation history.",
+      "input": {
+        "session_id": "string",
+        "message": "string",
+        "response": "object",
+        "agent_used": "string",
+        "intent": "string"
+      },
+      "output": {
+        "log_id": "string"
+      },
+      "log_destinations": [
+        "conversation_messages table",
+        "agents_log table",
+        "CRM sync queue"
+      ],
+      "next": "return_response"
+    },
+    {
+      "id": "return_response",
+      "name": "Return Response",
+      "type": "output",
+      "description": "Send the formatted response back to the customer.",
+      "input": {
+        "formatted_response": "object"
+      },
+      "output": {
+        "delivered": "boolean"
+      },
+      "terminal": true
+    },
+    {
+      "id": "escalate_to_human",
+      "name": "Escalate to Human",
+      "type": "escalation",
+      "description": "Transfer conversation to human agent queue.",
+      "input": {
+        "session_id": "string",
+        "escalation_reason": "string",
+        "conversation_summary": "string"
+      },
+      "output": {
+        "queue_assigned": "string",
+        "wait_time": "number",
+        "transfer_successful": "boolean"
+      },
+      "escalation_flow": [
+        "Generate conversation summary",
+        "Select appropriate queue",
+        "Send escalation message to customer",
+        "Transfer with context to human"
+      ],
+      "terminal": true
+    }
+  ],
+  "error_handling": {
+    "on_intent_failure": "default_to_support",
+    "on_knowledge_failure": "respond_with_apology",
+    "on_generation_failure": "escalate_to_human",
+    "on_channel_error": "retry_with_fallback"
+  }
+}

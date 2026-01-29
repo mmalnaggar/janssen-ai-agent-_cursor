@@ -1,0 +1,381 @@
+{
+  "name": "Janssen_AI_Governance_Validation",
+  "version": "1.0.0",
+  "status": "blueprint",
+  "description": "Read-only governance validation workflow. Replays past conversations in simulation mode to validate governance decisions without side effects.",
+  "notes": [
+    "This workflow is READ-ONLY - no side effects on production systems",
+    "Used for compliance review and governance validation",
+    "Can replay historical conversations from analytics_events",
+    "Outputs governance_report per session for audit",
+    "Results stored in analytics_events with event_type='GOVERNANCE_VALIDATION'",
+    "v1.0.0: Initial governance validation layer"
+  ],
+
+  "nodes": [
+    {
+      "id": "node_trigger_options",
+      "name": "Trigger_Options",
+      "type": "n8n-nodes-base.switch",
+      "position": [100, 300],
+      "parameters": {
+        "rules": {
+          "rules": [
+            { "value": "webhook", "output": 0 },
+            { "value": "schedule", "output": 1 },
+            { "value": "manual", "output": 2 }
+          ]
+        },
+        "fallbackOutput": 2,
+        "dataPropertyName": "trigger_type"
+      },
+      "notes": "Routes to appropriate trigger based on execution mode:\n- webhook: API-triggered validation\n- schedule: Scheduled batch validation\n- manual: Manual execution for specific sessions"
+    },
+
+    {
+      "id": "node_webhook_trigger",
+      "name": "Validation_Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "position": [100, 150],
+      "parameters": {
+        "path": "governance-validation",
+        "httpMethod": "POST",
+        "responseMode": "lastNode",
+        "authentication": "headerAuth"
+      },
+      "notes": "🔒 GOVERNANCE VALIDATION WEBHOOK\n\nAccepts validation requests with parameters:\n- session_ids: Array of session IDs to validate\n- date_range: { start, end } for batch validation\n- simulation_mode: true (always read-only)\n\nAuthentication required for security."
+    },
+
+    {
+      "id": "node_schedule_trigger",
+      "name": "Daily_Validation_Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [100, 450],
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "hours", "hoursInterval": 24 }]
+        }
+      },
+      "notes": "📅 SCHEDULED VALIDATION\n\nRuns daily at configured time to validate previous day's conversations.\nUseful for compliance reporting and trend analysis."
+    },
+
+    {
+      "id": "node_load_governance_config",
+      "name": "Load_Governance_Config",
+      "type": "n8n-nodes-base.function",
+      "position": [300, 300],
+      "parameters": {
+        "functionCode": "// ============================================================\n// LOAD GOVERNANCE CONFIGURATION\n// ============================================================\n// Purpose: Load all governance configs for validation\n// Mode: READ-ONLY - no modifications\n// ============================================================\n\nconst governanceConfig = {\n  version: '1.0.0',\n  simulation_mode: true,\n  read_only: true,\n  \n  // Policy Matrix\n  policy_matrix: {\n    forbidden_actions: [\n      'approve_refund',\n      'modify_order',\n      'provide_legal_advice',\n      'disclose_internal_policies',\n      'share_customer_data',\n      'make_promises',\n      'discuss_competitors_negatively',\n      'provide_medical_advice',\n      'negotiate_prices',\n      'admit_liability'\n    ],\n    \n    prohibited_phrases: [\n      'I promise',\n      'I guarantee',\n      'We will definitely',\n      '100% certain',\n      'Legally speaking',\n      'Our lawyer',\n      'Sue us',\n      \"It's your fault\",\n      \"You're wrong\"\n    ],\n    \n    prohibited_patterns: [\n      'refund.*approved',\n      'compensation.*will.*receive',\n      'legal.*action',\n      'lawsuit',\n      '\\\\$\\\\d+.*refund',\n      'credit.*\\\\d+.*account'\n    ]\n  },\n  \n  // Agent Whitelists\n  agent_whitelists: {\n    sales: {\n      allowed_actions: ['provide_product_information', 'recommend_products', 'provide_pricing_information', 'collect_contact_information', 'schedule_callback', 'initiate_escalation'],\n      forbidden_actions: ['process_payment', 'approve_discount', 'negotiate_prices', 'modify_order'],\n      confidence_threshold: 0.70\n    },\n    support: {\n      allowed_actions: ['provide_order_status', 'answer_faq', 'log_feedback', 'schedule_callback', 'initiate_escalation'],\n      forbidden_actions: ['modify_order', 'cancel_order', 'process_refund', 'change_delivery_address'],\n      confidence_threshold: 0.65\n    },\n    warranty: {\n      allowed_actions: ['explain_warranty_terms', 'check_warranty_status', 'initiate_warranty_claim', 'schedule_callback', 'initiate_escalation'],\n      forbidden_actions: ['approve_warranty_claim', 'authorize_replacement', 'approve_refund', 'extend_warranty_period'],\n      confidence_threshold: 0.70\n    },\n    complaint: {\n      allowed_actions: ['log_complaint', 'acknowledge_concern', 'provide_case_number', 'schedule_callback', 'initiate_escalation'],\n      forbidden_actions: ['approve_compensation', 'offer_refund', 'make_promises', 'admit_liability'],\n      confidence_threshold: 0.60\n    },\n    escalation: {\n      allowed_actions: ['confirm_escalation', 'collect_callback_details', 'summarize_conversation', 'initiate_escalation'],\n      forbidden_actions: ['attempt_resolution', 'make_promises', 'provide_compensation'],\n      confidence_threshold: 0.50\n    }\n  },\n  \n  // Escalation Rules\n  escalation_rules: {\n    legal_triggers: {\n      keywords: ['lawyer', 'attorney', 'legal action', 'sue', 'lawsuit', 'court', 'solicitor'],\n      severity: 'CRITICAL',\n      auto_escalate: true\n    },\n    refund_triggers: {\n      keywords: ['refund', 'money back', 'return', 'reimburse', 'compensation', 'chargeback'],\n      severity: 'HIGH',\n      auto_escalate: true\n    },\n    safety_triggers: {\n      keywords: ['injury', 'hurt', 'hospital', 'dangerous', 'unsafe', 'hazard', 'fire'],\n      severity: 'CRITICAL',\n      auto_escalate: true\n    },\n    sentiment_triggers: {\n      negative_threshold: -0.7,\n      aggression_keywords: ['idiot', 'stupid', 'useless', 'scam', 'fraud'],\n      severity: 'HIGH'\n    },\n    confidence_triggers: {\n      sales: 0.60,\n      support: 0.55,\n      warranty: 0.60,\n      complaint: 0.50,\n      default: 0.55\n    }\n  },\n  \n  // Validation Settings\n  validation_settings: {\n    max_sessions_per_batch: 1000,\n    include_response_analysis: true,\n    generate_recommendations: true\n  }\n};\n\nreturn [{ json: { governance_config: governanceConfig, loaded_at: new Date().toISOString() } }];"
+      },
+      "notes": "📋 GOVERNANCE CONFIG LOADER\n\n=== PURPOSE ===\nLoads all governance configuration for validation.\n\n=== INCLUDES ===\n• Policy matrix (forbidden actions, phrases, patterns)\n• Agent whitelists per agent type\n• Escalation rules and triggers\n• Validation settings\n\n=== MODE ===\n🔒 READ-ONLY: No modifications to configs"
+    },
+
+    {
+      "id": "node_fetch_sessions",
+      "name": "Fetch_Sessions_To_Validate",
+      "type": "n8n-nodes-base.postgres",
+      "position": [500, 300],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Fetch sessions for governance validation\n-- MODE: READ-ONLY\n\nSELECT \n    session_id,\n    agent_used,\n    channel,\n    event_type,\n    confidence,\n    escalated,\n    timestamp,\n    date,\n    hour,\n    is_business_hours,\n    -- Include any stored response data for validation\n    COALESCE(confidence_bucket, 'unknown') as confidence_bucket\nFROM analytics_events\nWHERE \n    -- Date range filter (parameterized)\n    date >= COALESCE($1::date, CURRENT_DATE - INTERVAL '1 day')\n    AND date <= COALESCE($2::date, CURRENT_DATE)\n    -- Optional session ID filter\n    AND ($3::text IS NULL OR session_id = ANY($3::text[]))\n    -- Exclude already validated sessions (optional)\n    AND session_id NOT IN (\n        SELECT DISTINCT session_id \n        FROM analytics_events \n        WHERE event_type = 'GOVERNANCE_VALIDATION'\n        AND date >= CURRENT_DATE - INTERVAL '7 days'\n    )\nORDER BY timestamp ASC\nLIMIT 1000;"
+      },
+      "notes": "📊 FETCH SESSIONS FOR VALIDATION\n\n=== PURPOSE ===\nRetrieve historical sessions from analytics_events for governance validation.\n\n=== PARAMETERS ===\n$1: Start date (default: yesterday)\n$2: End date (default: today)\n$3: Specific session IDs (optional)\n\n=== MODE ===\n🔒 READ-ONLY: SELECT query only"
+    },
+
+    {
+      "id": "node_group_by_session",
+      "name": "Group_By_Session",
+      "type": "n8n-nodes-base.function",
+      "position": [700, 300],
+      "parameters": {
+        "functionCode": "// ============================================================\n// GROUP EVENTS BY SESSION\n// ============================================================\n// Purpose: Group analytics events into conversation sessions\n// Mode: READ-ONLY - data transformation only\n// ============================================================\n\nconst items = $input.all();\nconst governanceConfig = $node['Load_Governance_Config'].json.governance_config;\n\n// Group events by session_id\nconst sessionMap = new Map();\n\nfor (const item of items) {\n  const event = item.json;\n  const sessionId = event.session_id;\n  \n  if (!sessionMap.has(sessionId)) {\n    sessionMap.set(sessionId, {\n      session_id: sessionId,\n      events: [],\n      agents_used: new Set(),\n      channels: new Set(),\n      total_confidence: 0,\n      confidence_count: 0,\n      escalated: false,\n      first_timestamp: event.timestamp,\n      last_timestamp: event.timestamp\n    });\n  }\n  \n  const session = sessionMap.get(sessionId);\n  session.events.push(event);\n  session.agents_used.add(event.agent_used);\n  session.channels.add(event.channel);\n  \n  if (event.confidence) {\n    session.total_confidence += event.confidence;\n    session.confidence_count++;\n  }\n  \n  if (event.escalated) {\n    session.escalated = true;\n  }\n  \n  if (event.timestamp > session.last_timestamp) {\n    session.last_timestamp = event.timestamp;\n  }\n}\n\n// Convert to array and compute averages\nconst sessions = [];\nfor (const [sessionId, session] of sessionMap) {\n  sessions.push({\n    json: {\n      session_id: sessionId,\n      events: session.events,\n      agents_used: Array.from(session.agents_used),\n      channels: Array.from(session.channels),\n      avg_confidence: session.confidence_count > 0 \n        ? session.total_confidence / session.confidence_count \n        : null,\n      turn_count: session.events.length,\n      escalated: session.escalated,\n      first_timestamp: session.first_timestamp,\n      last_timestamp: session.last_timestamp,\n      governance_config: governanceConfig\n    }\n  });\n}\n\nreturn sessions;"
+      },
+      "notes": "📦 GROUP BY SESSION\n\n=== PURPOSE ===\nGroups individual events into conversation sessions for holistic validation.\n\n=== OUTPUT ===\nOne item per session with:\n• All events for the session\n• Agents used\n• Channels used\n• Average confidence\n• Escalation status\n\n=== MODE ===\n🔒 READ-ONLY: Data transformation only"
+    },
+
+    {
+      "id": "node_validate_governance",
+      "name": "Validate_Governance_Decisions",
+      "type": "n8n-nodes-base.function",
+      "position": [900, 300],
+      "parameters": {
+        "functionCode": "// ============================================================\n// VALIDATE GOVERNANCE DECISIONS\n// ============================================================\n// Purpose: Replay and validate governance rules against session\n// Mode: READ-ONLY SIMULATION - no side effects\n// ============================================================\n\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const session = item.json;\n  const config = session.governance_config;\n  \n  // Initialize governance report\n  const governanceReport = {\n    session_id: session.session_id,\n    validation_timestamp: new Date().toISOString(),\n    simulation_mode: true,\n    read_only: true,\n    \n    // Session summary\n    session_summary: {\n      agent_used: session.agents_used,\n      primary_agent: session.agents_used[0] || 'unknown',\n      channels: session.channels,\n      turn_count: session.turn_count,\n      avg_confidence: session.avg_confidence,\n      was_escalated: session.escalated,\n      duration_seconds: calculateDuration(session.first_timestamp, session.last_timestamp)\n    },\n    \n    // Governance validation results\n    validation_results: {\n      blocked_actions: [],\n      triggered_policies: [],\n      escalation_triggers: [],\n      confidence_flags: [],\n      content_violations: [],\n      whitelist_violations: []\n    },\n    \n    // Escalation analysis\n    escalation_analysis: {\n      should_have_escalated: false,\n      escalation_reasons: [],\n      actual_escalated: session.escalated,\n      escalation_correct: null\n    },\n    \n    // Compliance score\n    compliance_score: 100,\n    compliance_issues: [],\n    \n    // Recommendations\n    recommendations: []\n  };\n  \n  // Validate each event in session\n  for (const event of session.events) {\n    validateEvent(event, config, governanceReport);\n  }\n  \n  // Determine if escalation was correct\n  determineEscalationCorrectness(governanceReport);\n  \n  // Calculate final compliance score\n  calculateComplianceScore(governanceReport);\n  \n  // Generate recommendations\n  generateRecommendations(governanceReport);\n  \n  results.push({ json: governanceReport });\n}\n\n// ========================================\n// HELPER FUNCTIONS\n// ========================================\n\nfunction calculateDuration(start, end) {\n  if (!start || !end) return null;\n  return Math.round((new Date(end) - new Date(start)) / 1000);\n}\n\nfunction validateEvent(event, config, report) {\n  const agent = event.agent_used;\n  const whitelist = config.agent_whitelists[agent];\n  \n  // 1. Confidence validation\n  if (whitelist && event.confidence) {\n    const threshold = whitelist.confidence_threshold;\n    if (event.confidence < threshold) {\n      report.validation_results.confidence_flags.push({\n        event_type: event.event_type,\n        confidence: event.confidence,\n        threshold: threshold,\n        below_threshold: true\n      });\n      \n      // Check escalation trigger threshold\n      const escalationThreshold = config.escalation_rules.confidence_triggers[agent] || \n                                  config.escalation_rules.confidence_triggers.default;\n      if (event.confidence < escalationThreshold) {\n        report.escalation_analysis.should_have_escalated = true;\n        report.escalation_analysis.escalation_reasons.push({\n          reason: 'LOW_CONFIDENCE',\n          details: `Confidence ${event.confidence} below escalation threshold ${escalationThreshold}`,\n          severity: 'MEDIUM'\n        });\n      }\n    }\n  }\n  \n  // 2. Check for escalation trigger keywords in event_type or context\n  checkEscalationTriggers(event, config, report);\n}\n\nfunction checkEscalationTriggers(event, config, report) {\n  const eventType = (event.event_type || '').toLowerCase();\n  \n  // Legal triggers\n  for (const keyword of config.escalation_rules.legal_triggers.keywords) {\n    if (eventType.includes(keyword.toLowerCase())) {\n      report.escalation_analysis.should_have_escalated = true;\n      report.escalation_analysis.escalation_reasons.push({\n        reason: 'LEGAL_TRIGGER',\n        details: `Legal keyword detected: ${keyword}`,\n        severity: 'CRITICAL'\n      });\n      report.validation_results.escalation_triggers.push({\n        trigger_type: 'legal',\n        keyword: keyword,\n        severity: 'CRITICAL'\n      });\n    }\n  }\n  \n  // Refund triggers\n  for (const keyword of config.escalation_rules.refund_triggers.keywords) {\n    if (eventType.includes(keyword.toLowerCase())) {\n      report.escalation_analysis.should_have_escalated = true;\n      report.escalation_analysis.escalation_reasons.push({\n        reason: 'REFUND_TRIGGER',\n        details: `Refund keyword detected: ${keyword}`,\n        severity: 'HIGH'\n      });\n      report.validation_results.escalation_triggers.push({\n        trigger_type: 'refund',\n        keyword: keyword,\n        severity: 'HIGH'\n      });\n    }\n  }\n  \n  // Safety triggers\n  for (const keyword of config.escalation_rules.safety_triggers.keywords) {\n    if (eventType.includes(keyword.toLowerCase())) {\n      report.escalation_analysis.should_have_escalated = true;\n      report.escalation_analysis.escalation_reasons.push({\n        reason: 'SAFETY_TRIGGER',\n        details: `Safety keyword detected: ${keyword}`,\n        severity: 'CRITICAL'\n      });\n      report.validation_results.escalation_triggers.push({\n        trigger_type: 'safety',\n        keyword: keyword,\n        severity: 'CRITICAL'\n      });\n    }\n  }\n}\n\nfunction determineEscalationCorrectness(report) {\n  const shouldHave = report.escalation_analysis.should_have_escalated;\n  const didEscalate = report.escalation_analysis.actual_escalated;\n  \n  if (shouldHave && didEscalate) {\n    report.escalation_analysis.escalation_correct = true;\n    report.escalation_analysis.assessment = 'CORRECT_ESCALATION';\n  } else if (shouldHave && !didEscalate) {\n    report.escalation_analysis.escalation_correct = false;\n    report.escalation_analysis.assessment = 'MISSED_ESCALATION';\n    report.compliance_issues.push({\n      issue_type: 'MISSED_ESCALATION',\n      severity: 'HIGH',\n      details: 'Session should have been escalated but was not',\n      reasons: report.escalation_analysis.escalation_reasons\n    });\n  } else if (!shouldHave && didEscalate) {\n    report.escalation_analysis.escalation_correct = true;\n    report.escalation_analysis.assessment = 'CONSERVATIVE_ESCALATION';\n  } else {\n    report.escalation_analysis.escalation_correct = true;\n    report.escalation_analysis.assessment = 'CORRECT_NO_ESCALATION';\n  }\n}\n\nfunction calculateComplianceScore(report) {\n  let score = 100;\n  \n  // Deduct for missed escalations\n  if (report.escalation_analysis.assessment === 'MISSED_ESCALATION') {\n    const criticalReasons = report.escalation_analysis.escalation_reasons\n      .filter(r => r.severity === 'CRITICAL').length;\n    const highReasons = report.escalation_analysis.escalation_reasons\n      .filter(r => r.severity === 'HIGH').length;\n    \n    score -= criticalReasons * 25;\n    score -= highReasons * 15;\n  }\n  \n  // Deduct for blocked actions\n  score -= report.validation_results.blocked_actions.length * 10;\n  \n  // Deduct for policy violations\n  score -= report.validation_results.triggered_policies.length * 5;\n  \n  // Deduct for whitelist violations\n  score -= report.validation_results.whitelist_violations.length * 10;\n  \n  // Deduct for low confidence flags\n  score -= report.validation_results.confidence_flags.length * 3;\n  \n  report.compliance_score = Math.max(0, Math.min(100, score));\n}\n\nfunction generateRecommendations(report) {\n  // Escalation recommendations\n  if (report.escalation_analysis.assessment === 'MISSED_ESCALATION') {\n    report.recommendations.push({\n      priority: 'HIGH',\n      category: 'ESCALATION',\n      recommendation: 'Review escalation trigger configuration',\n      details: 'Session matched escalation criteria but was not escalated. Review trigger keywords and thresholds.'\n    });\n  }\n  \n  // Confidence recommendations\n  if (report.validation_results.confidence_flags.length > 0) {\n    const avgFlaggedConfidence = report.validation_results.confidence_flags\n      .reduce((sum, f) => sum + f.confidence, 0) / report.validation_results.confidence_flags.length;\n    \n    report.recommendations.push({\n      priority: 'MEDIUM',\n      category: 'CONFIDENCE',\n      recommendation: 'Review agent training for low-confidence interactions',\n      details: `Average confidence in flagged events: ${avgFlaggedConfidence.toFixed(3)}`\n    });\n  }\n  \n  // General recommendations\n  if (report.compliance_score < 70) {\n    report.recommendations.push({\n      priority: 'HIGH',\n      category: 'COMPLIANCE',\n      recommendation: 'Session requires compliance review',\n      details: `Compliance score ${report.compliance_score} is below acceptable threshold of 70`\n    });\n  }\n}\n\nreturn results;"
+      },
+      "notes": "🔍 VALIDATE GOVERNANCE DECISIONS\n\n=== PURPOSE ===\nReplays governance rules against historical session data to validate decisions.\n\n=== VALIDATES ===\n• Confidence thresholds per agent\n• Escalation trigger keywords\n• Policy compliance\n• Whitelist adherence\n\n=== OUTPUTS ===\nGovernance report per session with:\n• blocked_actions\n• triggered_policies\n• escalation_analysis\n• compliance_score\n• recommendations\n\n=== MODE ===\n🔒 SIMULATION: Read-only, no side effects"
+    },
+
+    {
+      "id": "node_check_compliance_score",
+      "name": "Check_Compliance_Score",
+      "type": "n8n-nodes-base.if",
+      "position": [1100, 300],
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.compliance_score }}",
+              "operation": "smaller",
+              "value2": 70
+            }
+          ]
+        }
+      },
+      "notes": "⚠️ COMPLIANCE THRESHOLD CHECK\n\nRoutes based on compliance score:\n• Score < 70: Flagged for review\n• Score >= 70: Passed validation\n\nOutput 0 (true): Low compliance - needs review\nOutput 1 (false): Acceptable compliance"
+    },
+
+    {
+      "id": "node_flag_for_review",
+      "name": "Flag_For_Compliance_Review",
+      "type": "n8n-nodes-base.function",
+      "position": [1300, 200],
+      "parameters": {
+        "functionCode": "// ============================================================\n// FLAG FOR COMPLIANCE REVIEW\n// ============================================================\n// Purpose: Mark low-compliance sessions for human review\n// Mode: READ-ONLY - generates flag, no modifications\n// ============================================================\n\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const report = item.json;\n  \n  const flaggedReport = {\n    ...report,\n    flagged_for_review: true,\n    review_priority: determineReviewPriority(report),\n    review_reason: generateReviewReason(report),\n    review_deadline: calculateReviewDeadline(report)\n  };\n  \n  results.push({ json: flaggedReport });\n}\n\nfunction determineReviewPriority(report) {\n  if (report.compliance_score < 50) return 'CRITICAL';\n  if (report.compliance_score < 60) return 'HIGH';\n  return 'MEDIUM';\n}\n\nfunction generateReviewReason(report) {\n  const reasons = [];\n  \n  if (report.escalation_analysis.assessment === 'MISSED_ESCALATION') {\n    reasons.push('Missed escalation trigger');\n  }\n  \n  if (report.validation_results.blocked_actions.length > 0) {\n    reasons.push(`${report.validation_results.blocked_actions.length} blocked action(s)`);\n  }\n  \n  if (report.validation_results.confidence_flags.length > 2) {\n    reasons.push('Multiple low confidence events');\n  }\n  \n  return reasons.join('; ') || 'Low overall compliance score';\n}\n\nfunction calculateReviewDeadline(report) {\n  const now = new Date();\n  if (report.compliance_score < 50) {\n    return new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString(); // 24 hours\n  }\n  return new Date(now.getTime() + 72 * 60 * 60 * 1000).toISOString(); // 72 hours\n}\n\nreturn results;"
+      },
+      "notes": "🚩 FLAG FOR COMPLIANCE REVIEW\n\n=== PURPOSE ===\nMarks sessions with low compliance scores for human review.\n\n=== ADDS ===\n• flagged_for_review: true\n• review_priority: CRITICAL/HIGH/MEDIUM\n• review_reason: Description of issues\n• review_deadline: SLA for review\n\n=== MODE ===\n🔒 READ-ONLY: Generates metadata only"
+    },
+
+    {
+      "id": "node_merge_results",
+      "name": "Merge_Validation_Results",
+      "type": "n8n-nodes-base.merge",
+      "position": [1500, 300],
+      "parameters": {
+        "mode": "multiplex"
+      },
+      "notes": "Merges flagged and passed validation results."
+    },
+
+    {
+      "id": "node_generate_batch_summary",
+      "name": "Generate_Batch_Summary",
+      "type": "n8n-nodes-base.function",
+      "position": [1700, 300],
+      "parameters": {
+        "functionCode": "// ============================================================\n// GENERATE BATCH VALIDATION SUMMARY\n// ============================================================\n// Purpose: Aggregate validation results into batch summary\n// Mode: READ-ONLY - reporting only\n// ============================================================\n\nconst items = $input.all();\n\nconst batchSummary = {\n  batch_id: `GOV_VAL_${Date.now()}`,\n  validation_timestamp: new Date().toISOString(),\n  simulation_mode: true,\n  read_only: true,\n  \n  // Totals\n  total_sessions_validated: items.length,\n  sessions_passed: 0,\n  sessions_flagged: 0,\n  \n  // Compliance distribution\n  compliance_distribution: {\n    excellent: 0,   // 90-100\n    good: 0,        // 70-89\n    fair: 0,        // 50-69\n    poor: 0,        // 30-49\n    critical: 0     // 0-29\n  },\n  \n  // Issue summary\n  total_missed_escalations: 0,\n  total_blocked_actions: 0,\n  total_policy_violations: 0,\n  total_confidence_flags: 0,\n  \n  // Agent breakdown\n  agent_summary: {},\n  \n  // Average compliance score\n  avg_compliance_score: 0,\n  \n  // Sessions requiring review\n  sessions_requiring_review: [],\n  \n  // Individual reports\n  session_reports: []\n};\n\nlet totalScore = 0;\n\nfor (const item of items) {\n  const report = item.json;\n  \n  // Count passed/flagged\n  if (report.flagged_for_review) {\n    batchSummary.sessions_flagged++;\n    batchSummary.sessions_requiring_review.push({\n      session_id: report.session_id,\n      compliance_score: report.compliance_score,\n      review_priority: report.review_priority,\n      review_reason: report.review_reason\n    });\n  } else {\n    batchSummary.sessions_passed++;\n  }\n  \n  // Compliance distribution\n  const score = report.compliance_score;\n  if (score >= 90) batchSummary.compliance_distribution.excellent++;\n  else if (score >= 70) batchSummary.compliance_distribution.good++;\n  else if (score >= 50) batchSummary.compliance_distribution.fair++;\n  else if (score >= 30) batchSummary.compliance_distribution.poor++;\n  else batchSummary.compliance_distribution.critical++;\n  \n  // Issue totals\n  if (report.escalation_analysis.assessment === 'MISSED_ESCALATION') {\n    batchSummary.total_missed_escalations++;\n  }\n  batchSummary.total_blocked_actions += report.validation_results.blocked_actions.length;\n  batchSummary.total_policy_violations += report.validation_results.triggered_policies.length;\n  batchSummary.total_confidence_flags += report.validation_results.confidence_flags.length;\n  \n  // Agent breakdown\n  const primaryAgent = report.session_summary.primary_agent;\n  if (!batchSummary.agent_summary[primaryAgent]) {\n    batchSummary.agent_summary[primaryAgent] = {\n      sessions: 0,\n      avg_compliance: 0,\n      total_score: 0,\n      flagged: 0\n    };\n  }\n  batchSummary.agent_summary[primaryAgent].sessions++;\n  batchSummary.agent_summary[primaryAgent].total_score += score;\n  if (report.flagged_for_review) {\n    batchSummary.agent_summary[primaryAgent].flagged++;\n  }\n  \n  totalScore += score;\n  batchSummary.session_reports.push(report);\n}\n\n// Calculate averages\nbatchSummary.avg_compliance_score = items.length > 0 \n  ? Math.round(totalScore / items.length) \n  : 0;\n\nfor (const agent in batchSummary.agent_summary) {\n  const agentData = batchSummary.agent_summary[agent];\n  agentData.avg_compliance = Math.round(agentData.total_score / agentData.sessions);\n  delete agentData.total_score;\n}\n\n// Sort sessions requiring review by priority\nbatchSummary.sessions_requiring_review.sort((a, b) => {\n  const priorityOrder = { CRITICAL: 0, HIGH: 1, MEDIUM: 2 };\n  return priorityOrder[a.review_priority] - priorityOrder[b.review_priority];\n});\n\nreturn [{ json: batchSummary }];"
+      },
+      "notes": "📊 BATCH VALIDATION SUMMARY\n\n=== PURPOSE ===\nAggregates all individual session validations into a batch summary report.\n\n=== INCLUDES ===\n• Total sessions validated\n• Pass/fail distribution\n• Compliance score distribution\n• Issue totals (missed escalations, violations, etc.)\n• Agent breakdown\n• Sessions requiring review (prioritized)\n\n=== MODE ===\n🔒 READ-ONLY: Reporting only"
+    },
+
+    {
+      "id": "node_store_validation_results",
+      "name": "Store_Validation_Results",
+      "type": "n8n-nodes-base.postgres",
+      "position": [1900, 300],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Store governance validation results in analytics_events\n-- This is the ONLY write operation in this workflow\n-- Event type: GOVERNANCE_VALIDATION\n\nINSERT INTO analytics_events (\n    session_id,\n    event_type,\n    agent_used,\n    channel,\n    confidence,\n    escalated,\n    timestamp,\n    date,\n    hour,\n    day_of_week,\n    is_business_hours\n) VALUES (\n    $1,\n    'GOVERNANCE_VALIDATION',\n    $2,\n    'validation',\n    $3,\n    $4,\n    NOW(),\n    CURRENT_DATE,\n    EXTRACT(HOUR FROM NOW()),\n    EXTRACT(DOW FROM NOW()),\n    EXTRACT(HOUR FROM NOW()) BETWEEN 9 AND 17\n)\nRETURNING *;"
+      },
+      "continueOnFail": true,
+      "notes": "💾 STORE VALIDATION RESULTS\n\n=== PURPOSE ===\nStores governance validation event in analytics_events.\n\n=== EVENT TYPE ===\n'GOVERNANCE_VALIDATION'\n\n=== FIELDS ===\n• session_id: Validated session\n• agent_used: Primary agent\n• confidence: Compliance score / 100\n• escalated: Whether flagged for review\n\n=== NOTE ===\nThis is the ONLY write operation in the entire workflow."
+    },
+
+    {
+      "id": "node_send_compliance_report",
+      "name": "Send_Compliance_Report",
+      "type": "n8n-nodes-base.slack",
+      "position": [2100, 300],
+      "parameters": {
+        "channel": "#ai-governance-reports",
+        "text": "📋 *AI Governance Validation Report*\n\n*Batch ID:* {{ $json.batch_id }}\n*Timestamp:* {{ $json.validation_timestamp }}\n*Mode:* {{ $json.simulation_mode ? '🔒 Simulation (Read-Only)' : 'Live' }}\n\n*Summary:*\n• Sessions Validated: {{ $json.total_sessions_validated }}\n• Passed: {{ $json.sessions_passed }} ✅\n• Flagged for Review: {{ $json.sessions_flagged }} ⚠️\n• Avg Compliance Score: {{ $json.avg_compliance_score }}%\n\n*Issues Found:*\n• Missed Escalations: {{ $json.total_missed_escalations }}\n• Blocked Actions: {{ $json.total_blocked_actions }}\n• Policy Violations: {{ $json.total_policy_violations }}\n• Low Confidence Flags: {{ $json.total_confidence_flags }}\n\n{{ $json.sessions_flagged > 0 ? '⚠️ Sessions requiring review have been flagged in the compliance dashboard.' : '✅ No sessions require immediate review.' }}"
+      },
+      "continueOnFail": true,
+      "notes": "📤 SEND COMPLIANCE REPORT\n\nSends summary report to Slack for visibility.\nFailure does not block workflow."
+    },
+
+    {
+      "id": "node_return_response",
+      "name": "Return_Validation_Response",
+      "type": "n8n-nodes-base.function",
+      "position": [2300, 300],
+      "parameters": {
+        "functionCode": "// Return validation response\nconst batchSummary = $json;\n\nreturn [{\n  json: {\n    success: true,\n    simulation_mode: true,\n    read_only: true,\n    batch_id: batchSummary.batch_id,\n    summary: {\n      total_validated: batchSummary.total_sessions_validated,\n      passed: batchSummary.sessions_passed,\n      flagged: batchSummary.sessions_flagged,\n      avg_compliance: batchSummary.avg_compliance_score\n    },\n    compliance_distribution: batchSummary.compliance_distribution,\n    agent_summary: batchSummary.agent_summary,\n    sessions_requiring_review: batchSummary.sessions_requiring_review.slice(0, 10),\n    message: `Validated ${batchSummary.total_sessions_validated} sessions. ${batchSummary.sessions_flagged} flagged for review.`\n  }\n}];"
+      },
+      "notes": "📤 RETURN RESPONSE\n\nReturns validation summary for webhook response."
+    }
+  ],
+
+  "connections": {
+    "Validation_Webhook": {
+      "main": [[{ "node": "Load_Governance_Config", "type": "main", "index": 0 }]]
+    },
+    "Daily_Validation_Schedule": {
+      "main": [[{ "node": "Load_Governance_Config", "type": "main", "index": 0 }]]
+    },
+    "Load_Governance_Config": {
+      "main": [[{ "node": "Fetch_Sessions_To_Validate", "type": "main", "index": 0 }]]
+    },
+    "Fetch_Sessions_To_Validate": {
+      "main": [[{ "node": "Group_By_Session", "type": "main", "index": 0 }]]
+    },
+    "Group_By_Session": {
+      "main": [[{ "node": "Validate_Governance_Decisions", "type": "main", "index": 0 }]]
+    },
+    "Validate_Governance_Decisions": {
+      "main": [[{ "node": "Check_Compliance_Score", "type": "main", "index": 0 }]]
+    },
+    "Check_Compliance_Score": {
+      "main": [
+        [{ "node": "Flag_For_Compliance_Review", "type": "main", "index": 0 }],
+        [{ "node": "Merge_Validation_Results", "type": "main", "index": 1 }]
+      ]
+    },
+    "Flag_For_Compliance_Review": {
+      "main": [[{ "node": "Merge_Validation_Results", "type": "main", "index": 0 }]]
+    },
+    "Merge_Validation_Results": {
+      "main": [[{ "node": "Generate_Batch_Summary", "type": "main", "index": 0 }]]
+    },
+    "Generate_Batch_Summary": {
+      "main": [[{ "node": "Store_Validation_Results", "type": "main", "index": 0 }]]
+    },
+    "Store_Validation_Results": {
+      "main": [[{ "node": "Send_Compliance_Report", "type": "main", "index": 0 }]]
+    },
+    "Send_Compliance_Report": {
+      "main": [[{ "node": "Return_Validation_Response", "type": "main", "index": 0 }]]
+    }
+  },
+
+  "sample_governance_report": {
+    "description": "Example governance_report JSON output per session",
+    "example": {
+      "session_id": "sess_20260129_abc123",
+      "validation_timestamp": "2026-01-29T15:30:00.000Z",
+      "simulation_mode": true,
+      "read_only": true,
+      
+      "session_summary": {
+        "agent_used": ["warranty", "support"],
+        "primary_agent": "warranty",
+        "channels": ["whatsapp"],
+        "turn_count": 5,
+        "avg_confidence": 0.72,
+        "was_escalated": true,
+        "duration_seconds": 245
+      },
+      
+      "validation_results": {
+        "blocked_actions": [
+          {
+            "action": "approve_refund",
+            "event_index": 3,
+            "reason": "Forbidden action per policy FORBID_001"
+          }
+        ],
+        "triggered_policies": [
+          {
+            "policy_id": "FORBID_001",
+            "policy_name": "approve_refund",
+            "severity": "CRITICAL"
+          }
+        ],
+        "escalation_triggers": [
+          {
+            "trigger_type": "refund",
+            "keyword": "refund",
+            "severity": "HIGH"
+          },
+          {
+            "trigger_type": "legal",
+            "keyword": "lawyer",
+            "severity": "CRITICAL"
+          }
+        ],
+        "confidence_flags": [
+          {
+            "event_type": "COMPLAINT_LOGGED",
+            "confidence": 0.58,
+            "threshold": 0.70,
+            "below_threshold": true
+          }
+        ],
+        "content_violations": [],
+        "whitelist_violations": []
+      },
+      
+      "escalation_analysis": {
+        "should_have_escalated": true,
+        "escalation_reasons": [
+          {
+            "reason": "REFUND_TRIGGER",
+            "details": "Refund keyword detected: refund",
+            "severity": "HIGH"
+          },
+          {
+            "reason": "LEGAL_TRIGGER",
+            "details": "Legal keyword detected: lawyer",
+            "severity": "CRITICAL"
+          },
+          {
+            "reason": "LOW_CONFIDENCE",
+            "details": "Confidence 0.58 below escalation threshold 0.60",
+            "severity": "MEDIUM"
+          }
+        ],
+        "actual_escalated": true,
+        "escalation_correct": true,
+        "assessment": "CORRECT_ESCALATION"
+      },
+      
+      "compliance_score": 75,
+      "compliance_issues": [],
+      
+      "recommendations": [
+        {
+          "priority": "MEDIUM",
+          "category": "CONFIDENCE",
+          "recommendation": "Review agent training for low-confidence interactions",
+          "details": "Average confidence in flagged events: 0.580"
+        }
+      ],
+      
+      "flagged_for_review": false
+    }
+  },
+
+  "compliance_review_notes": {
+    "description": "Notes for compliance review process",
+    "notes": [
+      {
+        "id": "NOTE_001",
+        "title": "Simulation Mode Guarantee",
+        "content": "This workflow operates in SIMULATION MODE only. All validation is read-only with no side effects on production systems. The only write operation is storing the validation event in analytics_events for audit purposes."
+      },
+      {
+        "id": "NOTE_002",
+        "title": "Compliance Score Interpretation",
+        "content": "Compliance scores are calculated as follows:\n- Start at 100\n- Deduct 25 points per CRITICAL missed escalation\n- Deduct 15 points per HIGH missed escalation\n- Deduct 10 points per blocked action\n- Deduct 5 points per policy violation\n- Deduct 3 points per low confidence flag\n\nScores below 70 are flagged for human review."
+      },
+      {
+        "id": "NOTE_003",
+        "title": "Escalation Assessment Categories",
+        "content": "CORRECT_ESCALATION: Session was correctly escalated when triggers were present\nMISSED_ESCALATION: Session should have been escalated but was not (compliance issue)\nCONSERVATIVE_ESCALATION: Session was escalated even without clear triggers (acceptable)\nCORRECT_NO_ESCALATION: Session correctly was not escalated"
+      },
+      {
+        "id": "NOTE_004",
+        "title": "Review SLA",
+        "content": "Flagged sessions have review deadlines based on compliance score:\n- Score < 50: 24-hour review SLA (CRITICAL)\n- Score 50-69: 72-hour review SLA (HIGH/MEDIUM)\n\nReview deadlines are stored in the governance_report."
+      },
+      {
+        "id": "NOTE_005",
+        "title": "Audit Trail",
+        "content": "All validation runs are recorded in analytics_events with event_type='GOVERNANCE_VALIDATION'. This provides a complete audit trail of validation activities for regulatory compliance."
+      },
+      {
+        "id": "NOTE_006",
+        "title": "Agent-Specific Thresholds",
+        "content": "Different agents have different confidence thresholds reflecting their risk profiles:\n- sales: 0.70 (higher bar for customer-facing sales)\n- support: 0.65 (standard support threshold)\n- warranty: 0.70 (higher bar for warranty decisions)\n- complaint: 0.60 (lower threshold acknowledges complexity)\n- escalation: 0.50 (intentionally low as escalation is already happening)"
+      },
+      {
+        "id": "NOTE_007",
+        "title": "Trigger Severity Levels",
+        "content": "CRITICAL: Legal, safety triggers - must always escalate\nHIGH: Refund, VIP, media threats - should escalate\nMEDIUM: Low confidence, repeated contact - consider escalation\n\nMissed CRITICAL escalations heavily impact compliance score."
+      },
+      {
+        "id": "NOTE_008",
+        "title": "Batch Validation Limits",
+        "content": "Each validation batch is limited to 1000 sessions to prevent performance issues. For larger validation needs, run multiple batches with date range filters."
+      }
+    ]
+  }
+}

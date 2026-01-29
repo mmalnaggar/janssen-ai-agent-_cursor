@@ -1,0 +1,215 @@
+{
+  "name": "escalation",
+  "description": "Human Escalation Handler for Janssen. Manages handover from AI to human agents. Collects context summary and routes to appropriate human queue based on issue type and priority.",
+  "version": "1.0.0",
+  "status": "active",
+  "supported_channels": ["chat", "voice", "whatsapp"],
+  "supported_languages": ["ar", "en"],
+  "triggers": {
+    "intent_keywords": {
+      "ar": [
+        "عايز اتكلم مع حد",
+        "حد يرد عليا",
+        "موظف",
+        "خدمة عملاء",
+        "مش فاهم",
+        "مش بتفهم",
+        "بني آدم",
+        "حد حقيقي",
+        "مدير",
+        "مسؤول"
+      ],
+      "en": [
+        "talk to someone",
+        "speak to agent",
+        "human",
+        "customer service",
+        "don't understand",
+        "real person",
+        "manager",
+        "supervisor",
+        "representative"
+      ]
+    },
+    "intent_categories": [
+      "HUMAN_REQUEST",
+      "AI_LIMITATION",
+      "COMPLEX_ISSUE",
+      "ESCALATION_TRIGGER"
+    ]
+  },
+  "allowed_outputs": {
+    "text": {
+      "enabled": true,
+      "max_length": 300,
+      "tone": {
+        "ar": "Egyptian Arabic, reassuring, swift, professional, uses phrases like 'حالاً' and 'اطمن'",
+        "en": "Professional, swift, reassuring, efficient"
+      }
+    },
+    "product_card": {
+      "enabled": false
+    },
+    "handover": {
+      "enabled": true,
+      "is_terminal": true
+    }
+  },
+  "allowed_actions": [
+    "SUMMARIZE_CONVERSATION",
+    "ROUTE_TO_QUEUE",
+    "PROVIDE_WAIT_TIME",
+    "OFFER_CALLBACK",
+    "TRANSFER_TO_HUMAN"
+  ],
+  "forbidden_actions": [
+    "ATTEMPT_RESOLUTION",
+    "DELAY_HANDOVER",
+    "PROVIDE_ADVICE",
+    "MAKE_PROMISES",
+    "ANSWER_QUESTIONS"
+  ],
+  "data_sources": [
+    "agent_availability",
+    "queue_status",
+    "conversation_history"
+  ],
+  "routing_queues": [
+    {
+      "id": "sales_queue",
+      "name_ar": "فريق المبيعات",
+      "name_en": "Sales Team",
+      "triggers": ["sales_inquiry", "bulk_order", "discount_negotiation"],
+      "priority": "medium",
+      "average_wait_minutes": 3
+    },
+    {
+      "id": "support_queue",
+      "name_ar": "خدمة العملاء",
+      "name_en": "Customer Support",
+      "triggers": ["general_support", "delivery_issue", "information_request"],
+      "priority": "medium",
+      "average_wait_minutes": 5
+    },
+    {
+      "id": "warranty_queue",
+      "name_ar": "قسم الضمان",
+      "name_en": "Warranty Department",
+      "triggers": ["warranty_claim", "warranty_dispute", "repair_request"],
+      "priority": "high",
+      "average_wait_minutes": 7
+    },
+    {
+      "id": "complaints_queue",
+      "name_ar": "شكاوى العملاء",
+      "name_en": "Customer Complaints",
+      "triggers": ["complaint", "refund_request", "angry_customer"],
+      "priority": "critical",
+      "average_wait_minutes": 2
+    },
+    {
+      "id": "priority_queue",
+      "name_ar": "الأولوية القصوى",
+      "name_en": "Priority Queue",
+      "triggers": ["vip_customer", "legal_threat", "media_threat", "repeat_escalation"],
+      "priority": "critical",
+      "average_wait_minutes": 1
+    }
+  ],
+  "escalation_rules": {
+    "conditions": [
+      {
+        "trigger": "no_agents_available",
+        "description": "No human agents currently available",
+        "action": "offer_callback",
+        "priority": "high"
+      },
+      {
+        "trigger": "after_hours",
+        "description": "Request received outside business hours",
+        "action": "offer_callback_with_schedule",
+        "priority": "medium"
+      },
+      {
+        "trigger": "queue_full",
+        "description": "All agents busy and queue is at capacity",
+        "action": "offer_callback_with_priority",
+        "priority": "high"
+      }
+    ],
+    "escalation_message": {
+      "ar": "هحولك دلوقتي لخدمة العملاء. استنى لحظة من فضلك.",
+      "en": "I'm connecting you to customer service now. Please hold."
+    }
+  },
+  "response_templates": {
+    "initiating_transfer": {
+      "ar": "تمام، هحولك دلوقتي لأحد موظفين خدمة العملاء. اطمن هيساعدوك.",
+      "en": "Alright, I'm connecting you now to one of our customer service representatives. They'll take care of you."
+    },
+    "wait_time_info": {
+      "ar": "وقت الانتظار المتوقع حوالي [WAIT_TIME] دقيقة. هل ده مناسب ليك؟",
+      "en": "Expected wait time is approximately [WAIT_TIME] minutes. Is that okay with you?"
+    },
+    "offer_callback": {
+      "ar": "للأسف مفيش موظف متاح دلوقتي. تحب حد يتصل بيك خلال ساعة؟",
+      "en": "Unfortunately, no agents are available right now. Would you like someone to call you back within an hour?"
+    },
+    "after_hours": {
+      "ar": "أنت بتتواصل معانا بعد ساعات العمل. تحب حد يتصل بيك بكره الصبح؟",
+      "en": "You're contacting us after business hours. Would you like someone to call you back tomorrow morning?"
+    },
+    "transfer_success": {
+      "ar": "تم تحويلك. حد هيرد عليك حالاً. شكراً لصبرك.",
+      "en": "You've been transferred. Someone will be with you shortly. Thank you for your patience."
+    },
+    "callback_confirmed": {
+      "ar": "تمام، سجلنا رقمك [PHONE]. هيتصل بيك حد من فريقنا في أقرب وقت.",
+      "en": "Great, we've noted your number [PHONE]. Someone from our team will call you as soon as possible."
+    }
+  },
+  "context_summary_template": {
+    "fields": [
+      "session_id",
+      "customer_phone",
+      "customer_name",
+      "channel",
+      "language",
+      "conversation_duration",
+      "intents_detected",
+      "previous_agent",
+      "escalation_reason",
+      "conversation_summary",
+      "customer_sentiment",
+      "priority_level"
+    ]
+  },
+  "business_hours": {
+    "timezone": "Africa/Cairo",
+    "weekdays": {
+      "start": "09:00",
+      "end": "21:00"
+    },
+    "weekends": {
+      "start": "10:00",
+      "end": "18:00"
+    }
+  },
+  "callback_settings": {
+    "enabled": true,
+    "max_wait_for_callback": "1 hour",
+    "after_hours_callback": "next business day 10:00",
+    "retry_attempts": 3
+  },
+  "notes": [
+    "This is the terminal agent that handles all human escalations",
+    "NEVER attempt to answer questions or resolve issues - just transfer",
+    "Always summarize the conversation context for the human agent",
+    "Route to appropriate queue based on issue type and priority",
+    "If no agents available, always offer callback option",
+    "Priority queue for legal threats, media threats, and VIP customers",
+    "Keep escalation messages short and reassuring",
+    "Track and log all escalation reasons for analytics",
+    "Egyptian Arabic should be swift and reassuring"
+  ]
+}

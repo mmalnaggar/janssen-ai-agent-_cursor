@@ -1,0 +1,473 @@
+{
+  "integration_name": "Janssen_AI_CRM_Integration",
+  "version": "1.0.0",
+  "status": "blueprint",
+  "description": "CRM integration blueprint for Janssen AI customer service system. Syncs conversations, messages, AI decisions, and escalations with CRM platform.",
+  "notes": [
+    "This is a BLUEPRINT document - not directly executable",
+    "Channel-agnostic: works with WhatsApp, voice, web chat, etc.",
+    "Replace PLACEHOLDER values with actual CRM configuration",
+    "No credentials included - configure in deployment"
+  ],
+  "crm_config": {
+    "provider": "PLACEHOLDER_CRM_PROVIDER",
+    "api_base_url": "PLACEHOLDER_CRM_API_URL",
+    "api_version": "v1",
+    "auth_type": "oauth2",
+    "rate_limit": {
+      "requests_per_minute": 60,
+      "retry_on_limit": true
+    },
+    "webhook_config": {
+      "incoming_webhook_path": "/api/crm/webhook",
+      "signature_validation": true
+    }
+  },
+  "field_mappings": {
+    "customer": {
+      "phone": "crm_contact.phone",
+      "name": "crm_contact.full_name",
+      "email": "crm_contact.email",
+      "session_id": "crm_contact.external_id"
+    },
+    "conversation": {
+      "id": "crm_case.case_id",
+      "session_id": "crm_case.external_reference",
+      "channel": "crm_case.channel",
+      "status": "crm_case.status",
+      "language": "crm_case.language"
+    },
+    "agent": {
+      "agent_name": "crm_activity.agent_type",
+      "role": "crm_activity.agent_role"
+    }
+  },
+  "events": [
+    {
+      "event_id": "evt_001",
+      "event_name": "New_Conversation_Created",
+      "description": "Triggered when a new customer conversation session is initiated across any channel.",
+      "trigger": {
+        "source": "Janssen AI Backend",
+        "condition": "New session_id created in conversations table",
+        "channels": ["whatsapp", "voice", "web_chat", "facebook", "instagram"],
+        "timing": "Synchronous - before first AI response"
+      },
+      "data_sent_to_crm": {
+        "event_type": "CONVERSATION_CREATED",
+        "timestamp": "ISO 8601 format",
+        "customer": {
+          "phone": "Customer phone number",
+          "name": "Customer name if available",
+          "email": "Customer email if available",
+          "external_id": "session_id from Janssen AI"
+        },
+        "conversation": {
+          "session_id": "Unique conversation identifier",
+          "channel": "whatsapp | voice | web_chat | etc",
+          "language": "ar | en",
+          "started_at": "Conversation start timestamp",
+          "source": "janssen_ai"
+        },
+        "metadata": {
+          "initial_message": "First customer message (optional)",
+          "entry_point": "IVR menu selection or direct message"
+        }
+      },
+      "crm_action": {
+        "primary_action": "Create or update Contact record",
+        "secondary_action": "Create new Case/Ticket",
+        "workflow_triggers": [
+          "Assign to AI Service Queue",
+          "Start SLA timer",
+          "Log activity: Conversation Started"
+        ],
+        "expected_response": {
+          "crm_contact_id": "CRM's internal contact ID",
+          "crm_case_id": "CRM's internal case ID",
+          "success": "Boolean"
+        }
+      },
+      "error_handling": {
+        "on_crm_unavailable": "Queue event for retry",
+        "on_duplicate_contact": "Update existing contact",
+        "max_retries": 3
+      }
+    },
+    {
+      "event_id": "evt_002",
+      "event_name": "New_Message_Logged",
+      "description": "Triggered when a new message is exchanged between customer and AI (inbound or outbound).",
+      "trigger": {
+        "source": "Janssen AI Backend",
+        "condition": "New record inserted in conversation_messages table",
+        "message_types": ["customer_message", "ai_response"],
+        "timing": "Asynchronous - after message processed"
+      },
+      "data_sent_to_crm": {
+        "event_type": "MESSAGE_LOGGED",
+        "timestamp": "ISO 8601 format",
+        "conversation": {
+          "session_id": "Conversation identifier",
+          "crm_case_id": "CRM case ID if known"
+        },
+        "message": {
+          "message_id": "Unique message identifier",
+          "direction": "inbound | outbound",
+          "sender_type": "customer | ai_agent",
+          "sender_id": "Phone number or agent name",
+          "content": {
+            "text": "Message text content",
+            "type": "text | image | document | voice_transcript",
+            "language": "ar | en"
+          },
+          "created_at": "Message timestamp"
+        },
+        "intent": {
+          "detected": "SALES_PRICE | DELIVERY | WARRANTY | etc",
+          "confidence": "0.0 to 1.0",
+          "classification_method": "keyword | ai_model"
+        },
+        "metadata": {
+          "channel": "whatsapp | voice | web_chat",
+          "response_time_ms": "Time to generate AI response"
+        }
+      },
+      "crm_action": {
+        "primary_action": "Add message to Case timeline",
+        "secondary_action": "Update Case last_activity timestamp",
+        "workflow_triggers": [
+          "Reset SLA inactivity timer",
+          "Update conversation transcript",
+          "Tag case with detected intent"
+        ],
+        "expected_response": {
+          "crm_activity_id": "CRM's activity/note ID",
+          "success": "Boolean"
+        }
+      },
+      "batching": {
+        "enabled": true,
+        "batch_size": 10,
+        "flush_interval_seconds": 5,
+        "notes": "Messages can be batched to reduce API calls"
+      },
+      "error_handling": {
+        "on_crm_unavailable": "Queue for batch retry",
+        "on_case_not_found": "Create case first, then log message",
+        "max_retries": 3
+      }
+    },
+    {
+      "event_id": "evt_003",
+      "event_name": "AI_Decision_Logged",
+      "description": "Triggered when AI makes a routing decision or takes a significant action during conversation.",
+      "trigger": {
+        "source": "Janssen AI Backend",
+        "condition": "New record inserted in agents_log table",
+        "decision_types": [
+          "AGENT_ROUTED",
+          "INTENT_CLASSIFIED",
+          "PRODUCT_RECOMMENDED",
+          "PRICE_QUOTED",
+          "LEAD_CAPTURED",
+          "FAQ_ANSWERED"
+        ],
+        "timing": "Asynchronous - after decision executed"
+      },
+      "data_sent_to_crm": {
+        "event_type": "AI_DECISION",
+        "timestamp": "ISO 8601 format",
+        "conversation": {
+          "session_id": "Conversation identifier",
+          "crm_case_id": "CRM case ID if known"
+        },
+        "decision": {
+          "decision_id": "Unique decision log ID",
+          "agent_name": "router | sales | support | escalation",
+          "agent_role": "Agent role description",
+          "action_type": "MESSAGE_ROUTED | PRODUCT_FETCHED | LEAD_CAPTURED | etc",
+          "intent_received": "Customer intent that triggered action",
+          "confidence_score": "0.0 to 1.0"
+        },
+        "action_details": {
+          "input": "Customer message or request",
+          "output": "AI response or action taken",
+          "data_accessed": "Products, prices, or policies retrieved",
+          "success": "Boolean indicating action success"
+        },
+        "performance": {
+          "response_time_ms": "Processing time in milliseconds",
+          "tokens_used": "LLM tokens consumed if applicable"
+        },
+        "business_rules": {
+          "rules_applied": "List of business rules checked",
+          "violations": "Any rule violations detected"
+        }
+      },
+      "crm_action": {
+        "primary_action": "Create AI Activity record on Case",
+        "secondary_action": "Update Case tags with agent type and intent",
+        "workflow_triggers": [
+          "Update AI interaction counter",
+          "Log for analytics/reporting",
+          "Flag if business rule violated"
+        ],
+        "expected_response": {
+          "crm_activity_id": "CRM's activity ID",
+          "success": "Boolean"
+        }
+      },
+      "analytics_fields": {
+        "track_for_reporting": [
+          "agent_name",
+          "action_type",
+          "intent_received",
+          "response_time_ms",
+          "success"
+        ],
+        "aggregate_metrics": [
+          "ai_resolution_rate",
+          "average_response_time",
+          "intent_distribution"
+        ]
+      },
+      "error_handling": {
+        "on_crm_unavailable": "Queue for batch retry",
+        "on_validation_error": "Log locally, skip CRM sync",
+        "max_retries": 2
+      }
+    },
+    {
+      "event_id": "evt_004",
+      "event_name": "Escalation_To_Human",
+      "description": "Triggered when AI escalates conversation to a human agent due to customer request, policy, or unresolvable issue.",
+      "trigger": {
+        "source": "Janssen AI Backend",
+        "condition": "Escalation agent activated OR conversation.escalated = true",
+        "escalation_reasons": [
+          "CUSTOMER_REQUESTED",
+          "ANGRY_CUSTOMER",
+          "COMPLAINT",
+          "POLICY_NOT_FOUND",
+          "CUSTOM_DISCOUNT_REQUEST",
+          "MISSING_PRICE",
+          "MAX_AI_TURNS_EXCEEDED",
+          "TECHNICAL_ERROR"
+        ],
+        "timing": "Synchronous - immediate priority"
+      },
+      "data_sent_to_crm": {
+        "event_type": "ESCALATION",
+        "priority": "high",
+        "timestamp": "ISO 8601 format",
+        "customer": {
+          "phone": "Customer phone number",
+          "name": "Customer name if known",
+          "sentiment": "positive | neutral | negative",
+          "language": "ar | en"
+        },
+        "conversation": {
+          "session_id": "Conversation identifier",
+          "crm_case_id": "CRM case ID",
+          "channel": "whatsapp | voice | web_chat",
+          "duration_seconds": "Total conversation duration",
+          "message_count": "Number of messages exchanged"
+        },
+        "escalation": {
+          "reason": "Primary escalation reason",
+          "reason_details": "Additional context",
+          "triggered_by": "ai_agent | business_rule | customer",
+          "ai_agent_last": "Last AI agent handling conversation"
+        },
+        "context": {
+          "conversation_summary": "AI-generated summary of conversation",
+          "intents_detected": "Array of all detected intents",
+          "products_discussed": "Products mentioned or quoted",
+          "unresolved_questions": "Questions AI could not answer"
+        },
+        "recommended_actions": {
+          "priority": "high | medium | low",
+          "suggested_resolution": "AI suggestion for human agent",
+          "relevant_knowledge_articles": "KB articles that may help"
+        }
+      },
+      "crm_action": {
+        "primary_action": "Update Case status to 'Escalated'",
+        "secondary_action": "Assign to Human Agent Queue",
+        "tertiary_action": "Create high-priority Task for follow-up",
+        "workflow_triggers": [
+          "Send alert to Customer Service Team",
+          "Start escalation SLA timer",
+          "Log escalation in Case timeline",
+          "Update AI escalation metrics",
+          "Notify supervisor if VIP customer"
+        ],
+        "assignment_rules": {
+          "route_by": "skill | language | availability",
+          "preferred_skills": ["arabic", "complaint_handling"],
+          "fallback_queue": "General Support Queue"
+        },
+        "expected_response": {
+          "crm_case_id": "Updated case ID",
+          "assigned_agent_id": "Human agent assigned",
+          "queue_position": "Position in queue",
+          "estimated_wait_time": "Seconds until human available",
+          "success": "Boolean"
+        }
+      },
+      "sla_config": {
+        "escalation_response_time_minutes": 15,
+        "escalation_resolution_time_hours": 4,
+        "breach_notification": "Notify manager on SLA breach"
+      },
+      "error_handling": {
+        "on_crm_unavailable": "Critical - retry immediately",
+        "on_no_agents_available": "Queue with callback offer",
+        "max_retries": 5,
+        "fallback": "Email notification to support team"
+      }
+    },
+    {
+      "event_id": "evt_005",
+      "event_name": "Conversation_Closed",
+      "description": "Triggered when a conversation is completed, either resolved by AI, resolved by human, or abandoned by customer.",
+      "trigger": {
+        "source": "Janssen AI Backend",
+        "condition": "conversation.status changed to 'closed' or 'resolved'",
+        "close_reasons": [
+          "RESOLVED_BY_AI",
+          "RESOLVED_BY_HUMAN",
+          "CUSTOMER_ABANDONED",
+          "TIMEOUT_INACTIVITY",
+          "CUSTOMER_SATISFIED",
+          "LEAD_CAPTURED",
+          "DUPLICATE_CLOSED"
+        ],
+        "timing": "Asynchronous - after conversation ends"
+      },
+      "data_sent_to_crm": {
+        "event_type": "CONVERSATION_CLOSED",
+        "timestamp": "ISO 8601 format",
+        "customer": {
+          "phone": "Customer phone number",
+          "name": "Customer name",
+          "crm_contact_id": "CRM contact ID"
+        },
+        "conversation": {
+          "session_id": "Conversation identifier",
+          "crm_case_id": "CRM case ID",
+          "channel": "whatsapp | voice | web_chat",
+          "language": "ar | en",
+          "started_at": "Conversation start time",
+          "ended_at": "Conversation end time",
+          "duration_seconds": "Total duration"
+        },
+        "resolution": {
+          "status": "resolved | unresolved | abandoned",
+          "close_reason": "Reason for closing",
+          "resolved_by": "ai | human | system",
+          "resolution_agent": "Agent name that resolved (if applicable)",
+          "resolution_notes": "Notes on resolution"
+        },
+        "metrics": {
+          "total_messages": "Number of messages exchanged",
+          "ai_messages": "Messages handled by AI",
+          "human_messages": "Messages handled by human (if escalated)",
+          "first_response_time_ms": "Time to first AI response",
+          "average_response_time_ms": "Average response time",
+          "escalated": "Boolean - was conversation escalated",
+          "escalation_count": "Number of escalations"
+        },
+        "intents_summary": {
+          "primary_intent": "Main customer intent",
+          "all_intents": "Array of all detected intents",
+          "intent_changes": "Number of intent switches"
+        },
+        "outcomes": {
+          "lead_captured": "Boolean - was lead created",
+          "lead_id": "Lead ID if captured",
+          "product_interest": "Products customer showed interest in",
+          "next_action": "Recommended follow-up action"
+        },
+        "satisfaction": {
+          "csat_score": "Customer satisfaction score if collected",
+          "feedback_text": "Customer feedback if provided",
+          "sentiment_final": "positive | neutral | negative"
+        }
+      },
+      "crm_action": {
+        "primary_action": "Close Case with resolution details",
+        "secondary_action": "Update Contact interaction history",
+        "tertiary_action": "Create Follow-up Task if needed",
+        "workflow_triggers": [
+          "Stop SLA timers",
+          "Calculate resolution metrics",
+          "Update customer 360 profile",
+          "Trigger CSAT survey (if applicable)",
+          "Update AI performance dashboard",
+          "Archive conversation transcript"
+        ],
+        "lead_handling": {
+          "if_lead_captured": "Create Opportunity in CRM",
+          "assign_to": "Sales team based on product interest",
+          "follow_up_days": 2
+        },
+        "expected_response": {
+          "crm_case_id": "Closed case ID",
+          "case_status": "closed",
+          "success": "Boolean"
+        }
+      },
+      "post_close_actions": {
+        "send_csat_survey": {
+          "enabled": true,
+          "delay_minutes": 30,
+          "channel": "same_as_conversation",
+          "survey_type": "simple_rating"
+        },
+        "analytics_export": {
+          "enabled": true,
+          "include_transcript": false,
+          "include_metrics": true
+        }
+      },
+      "error_handling": {
+        "on_crm_unavailable": "Queue for retry",
+        "on_case_already_closed": "Log warning, skip update",
+        "max_retries": 3
+      }
+    }
+  ],
+  "sync_modes": {
+    "real_time": {
+      "events": ["New_Conversation_Created", "Escalation_To_Human"],
+      "description": "Immediate sync for critical events"
+    },
+    "near_real_time": {
+      "events": ["New_Message_Logged", "AI_Decision_Logged"],
+      "batch_interval_seconds": 5,
+      "description": "Batched sync for high-volume events"
+    },
+    "deferred": {
+      "events": ["Conversation_Closed"],
+      "description": "Can tolerate slight delay"
+    }
+  },
+  "retry_policy": {
+    "default_max_retries": 3,
+    "retry_delays_seconds": [1, 5, 30],
+    "dead_letter_queue": true,
+    "alert_on_persistent_failure": true
+  },
+  "monitoring": {
+    "health_check_interval_seconds": 60,
+    "alert_on_sync_lag_seconds": 300,
+    "metrics_tracked": [
+      "events_synced_per_minute",
+      "sync_latency_ms",
+      "retry_rate",
+      "error_rate"
+    ]
+  }
+}

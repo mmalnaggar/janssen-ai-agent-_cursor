@@ -1,0 +1,870 @@
+/**
+ * Janssen AI - Shopify Chatbot Widget Styles
+ * 
+ * Supports:
+ * - RTL (Arabic) and LTR (English) layouts
+ * - Floating widget positioning
+ * - Text messages and product cards
+ * - Responsive design
+ * - Dark/Light mode ready
+ */
+
+/* ============================================
+   CSS CUSTOM PROPERTIES (Variables)
+   ============================================ */
+
+:root {
+  /* Brand Colors */
+  --janssen-primary: #C41E3A;         /* Janssen Red */
+  --janssen-primary-dark: #A01830;
+  --janssen-primary-light: #E8425A;
+  --janssen-secondary: #4A4A4A;       /* Gray */
+  
+  /* Neutral Colors */
+  --janssen-white: #FFFFFF;
+  --janssen-black: #1A1A1A;
+  --janssen-gray-100: #F5F5F5;
+  --janssen-gray-200: #E5E5E5;
+  --janssen-gray-300: #D4D4D4;
+  --janssen-gray-400: #A3A3A3;
+  --janssen-gray-500: #737373;
+  --janssen-gray-600: #525252;
+  
+  /* Semantic Colors */
+  --janssen-success: #22C55E;
+  --janssen-error: #EF4444;
+  
+  /* Spacing */
+  --janssen-space-xs: 4px;
+  --janssen-space-sm: 8px;
+  --janssen-space-md: 16px;
+  --janssen-space-lg: 24px;
+  --janssen-space-xl: 32px;
+  
+  /* Typography */
+  --janssen-font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --janssen-font-family-ar: 'Cairo', 'Segoe UI', Tahoma, sans-serif;
+  --janssen-font-size-sm: 12px;
+  --janssen-font-size-md: 14px;
+  --janssen-font-size-lg: 16px;
+  
+  /* Border Radius */
+  --janssen-radius-sm: 8px;
+  --janssen-radius-md: 12px;
+  --janssen-radius-lg: 16px;
+  --janssen-radius-full: 50%;
+  
+  /* Shadows */
+  --janssen-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --janssen-shadow-md: 0 4px 6px rgba(0, 0, 0, 0.1);
+  --janssen-shadow-lg: 0 10px 25px rgba(0, 0, 0, 0.15);
+  --janssen-shadow-xl: 0 20px 40px rgba(0, 0, 0, 0.2);
+  
+  /* Transitions */
+  --janssen-transition-fast: 150ms ease;
+  --janssen-transition-normal: 300ms ease;
+  --janssen-transition-slow: 500ms ease;
+  
+  /* Widget Dimensions */
+  --janssen-widget-width: 380px;
+  --janssen-widget-height: 600px;
+  --janssen-toggle-size: 60px;
+}
+
+/* ============================================
+   MAIN CONTAINER
+   ============================================ */
+
+.janssen-chat-container {
+  position: fixed;
+  z-index: 999999;
+  font-family: var(--janssen-font-family);
+  font-size: var(--janssen-font-size-md);
+  line-height: 1.5;
+  box-sizing: border-box;
+}
+
+/* Positioning - Bottom Right (default) */
+.janssen-chat-container[data-position="bottom-right"] {
+  bottom: var(--janssen-space-lg);
+  right: var(--janssen-space-lg);
+}
+
+/* Positioning - Bottom Left */
+.janssen-chat-container[data-position="bottom-left"] {
+  bottom: var(--janssen-space-lg);
+  left: var(--janssen-space-lg);
+}
+
+/* Arabic Font Family */
+.janssen-chat-container[data-lang="ar"] {
+  font-family: var(--janssen-font-family-ar);
+}
+
+/* Reset box-sizing for all widget elements */
+.janssen-chat-container *,
+.janssen-chat-container *::before,
+.janssen-chat-container *::after {
+  box-sizing: border-box;
+}
+
+/* ============================================
+   TOGGLE BUTTON (Floating Action Button)
+   ============================================ */
+
+.janssen-chat-toggle {
+  width: var(--janssen-toggle-size);
+  height: var(--janssen-toggle-size);
+  border-radius: var(--janssen-radius-full);
+  background: var(--janssen-primary);
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--janssen-shadow-lg);
+  transition: transform var(--janssen-transition-fast), 
+              background var(--janssen-transition-fast),
+              box-shadow var(--janssen-transition-fast);
+  position: relative;
+  color: var(--janssen-white);
+}
+
+.janssen-chat-toggle:hover {
+  transform: scale(1.05);
+  background: var(--janssen-primary-dark);
+  box-shadow: var(--janssen-shadow-xl);
+}
+
+.janssen-chat-toggle:active {
+  transform: scale(0.95);
+}
+
+/* Toggle Icons */
+.janssen-chat-toggle .toggle-icon-chat,
+.janssen-chat-toggle .toggle-icon-close {
+  position: absolute;
+  transition: opacity var(--janssen-transition-normal), 
+              transform var(--janssen-transition-normal);
+}
+
+.janssen-chat-toggle .toggle-icon-close {
+  opacity: 0;
+  transform: rotate(-90deg);
+}
+
+/* When chat is open */
+.janssen-chat-container.is-open .janssen-chat-toggle .toggle-icon-chat {
+  opacity: 0;
+  transform: rotate(90deg);
+}
+
+.janssen-chat-container.is-open .janssen-chat-toggle .toggle-icon-close {
+  opacity: 1;
+  transform: rotate(0);
+}
+
+/* Unread Badge */
+.janssen-chat-toggle .unread-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 20px;
+  height: 20px;
+  background: var(--janssen-error);
+  color: var(--janssen-white);
+  border-radius: var(--janssen-radius-full);
+  font-size: var(--janssen-font-size-sm);
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--janssen-white);
+}
+
+/* RTL: Badge position */
+.janssen-chat-container[dir="rtl"] .janssen-chat-toggle .unread-badge {
+  right: auto;
+  left: -4px;
+}
+
+/* ============================================
+   CHAT WINDOW
+   ============================================ */
+
+.janssen-chat-window {
+  position: absolute;
+  bottom: calc(var(--janssen-toggle-size) + var(--janssen-space-md));
+  right: 0;
+  width: var(--janssen-widget-width);
+  height: var(--janssen-widget-height);
+  max-height: calc(100vh - 120px);
+  background: var(--janssen-white);
+  border-radius: var(--janssen-radius-lg);
+  box-shadow: var(--janssen-shadow-xl);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(20px) scale(0.95);
+  transition: opacity var(--janssen-transition-normal),
+              visibility var(--janssen-transition-normal),
+              transform var(--janssen-transition-normal);
+}
+
+/* Chat window open state */
+.janssen-chat-container.is-open .janssen-chat-window {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0) scale(1);
+}
+
+/* RTL: Window position */
+.janssen-chat-container[dir="rtl"] .janssen-chat-window {
+  right: auto;
+  left: 0;
+}
+
+/* Bottom-left positioning */
+.janssen-chat-container[data-position="bottom-left"] .janssen-chat-window {
+  right: auto;
+  left: 0;
+}
+
+.janssen-chat-container[data-position="bottom-left"][dir="rtl"] .janssen-chat-window {
+  left: auto;
+  right: 0;
+}
+
+/* ============================================
+   HEADER
+   ============================================ */
+
+.janssen-chat-header {
+  background: var(--janssen-primary);
+  color: var(--janssen-white);
+  padding: var(--janssen-space-md);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+
+.header-info {
+  display: flex;
+  align-items: center;
+  gap: var(--janssen-space-sm);
+}
+
+.header-avatar {
+  width: 40px;
+  height: 40px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: var(--janssen-radius-full);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.header-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.header-title {
+  font-size: var(--janssen-font-size-lg);
+  font-weight: 600;
+}
+
+.header-subtitle {
+  font-size: var(--janssen-font-size-sm);
+  opacity: 0.9;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--janssen-space-xs);
+}
+
+.header-actions button {
+  width: 36px;
+  height: 36px;
+  border: none;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: var(--janssen-radius-sm);
+  color: var(--janssen-white);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--janssen-transition-fast);
+}
+
+.header-actions button:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.language-toggle .lang-indicator {
+  font-size: var(--janssen-font-size-sm);
+  font-weight: 600;
+}
+
+/* ============================================
+   MESSAGES CONTAINER
+   ============================================ */
+
+.janssen-chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--janssen-space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--janssen-space-sm);
+  background: var(--janssen-gray-100);
+}
+
+/* Scrollbar Styling */
+.janssen-chat-messages::-webkit-scrollbar {
+  width: 6px;
+}
+
+.janssen-chat-messages::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.janssen-chat-messages::-webkit-scrollbar-thumb {
+  background: var(--janssen-gray-300);
+  border-radius: 3px;
+}
+
+.janssen-chat-messages::-webkit-scrollbar-thumb:hover {
+  background: var(--janssen-gray-400);
+}
+
+/* ============================================
+   MESSAGE BUBBLES
+   ============================================ */
+
+.message-wrapper {
+  display: flex;
+  flex-direction: column;
+  max-width: 85%;
+}
+
+/* User messages - align right in LTR, left in RTL */
+.message-wrapper.message-user {
+  align-self: flex-end;
+}
+
+/* Bot messages - align left in LTR, right in RTL */
+.message-wrapper.message-bot {
+  align-self: flex-start;
+}
+
+/* RTL: Swap alignments */
+.janssen-chat-container[dir="rtl"] .message-wrapper.message-user {
+  align-self: flex-start;
+}
+
+.janssen-chat-container[dir="rtl"] .message-wrapper.message-bot {
+  align-self: flex-end;
+}
+
+.message-bubble {
+  padding: var(--janssen-space-sm) var(--janssen-space-md);
+  border-radius: var(--janssen-radius-md);
+  word-wrap: break-word;
+}
+
+/* User bubble styling */
+.message-user .message-bubble {
+  background: var(--janssen-primary);
+  color: var(--janssen-white);
+  border-bottom-right-radius: var(--janssen-space-xs);
+}
+
+/* RTL: User bubble border radius */
+.janssen-chat-container[dir="rtl"] .message-user .message-bubble {
+  border-bottom-right-radius: var(--janssen-radius-md);
+  border-bottom-left-radius: var(--janssen-space-xs);
+}
+
+/* Bot bubble styling */
+.message-bot .message-bubble {
+  background: var(--janssen-white);
+  color: var(--janssen-black);
+  border: 1px solid var(--janssen-gray-200);
+  border-bottom-left-radius: var(--janssen-space-xs);
+}
+
+/* RTL: Bot bubble border radius */
+.janssen-chat-container[dir="rtl"] .message-bot .message-bubble {
+  border-bottom-left-radius: var(--janssen-radius-md);
+  border-bottom-right-radius: var(--janssen-space-xs);
+}
+
+.message-text {
+  margin-bottom: var(--janssen-space-xs);
+}
+
+.message-time {
+  font-size: 10px;
+  opacity: 0.7;
+  text-align: right;
+}
+
+/* RTL: Time alignment */
+.janssen-chat-container[dir="rtl"] .message-time {
+  text-align: left;
+}
+
+/* ============================================
+   PRODUCT CARDS
+   ============================================ */
+
+.message-bubble.product-card {
+  padding: 0;
+  overflow: hidden;
+  max-width: 280px;
+}
+
+.product-image {
+  width: 100%;
+  height: 140px;
+  background: var(--janssen-gray-200);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.product-image-placeholder {
+  color: var(--janssen-gray-400);
+}
+
+.product-info {
+  padding: var(--janssen-space-md);
+}
+
+.product-name {
+  margin: 0 0 var(--janssen-space-xs);
+  font-size: var(--janssen-font-size-md);
+  font-weight: 600;
+  color: var(--janssen-black);
+}
+
+.product-description {
+  margin: 0 0 var(--janssen-space-sm);
+  font-size: var(--janssen-font-size-sm);
+  color: var(--janssen-gray-500);
+  line-height: 1.4;
+}
+
+.product-price {
+  font-size: var(--janssen-font-size-lg);
+  font-weight: 700;
+  color: var(--janssen-primary);
+  margin-bottom: var(--janssen-space-sm);
+}
+
+.product-actions {
+  display: flex;
+  gap: var(--janssen-space-sm);
+}
+
+.product-btn {
+  flex: 1;
+  padding: var(--janssen-space-sm);
+  border: none;
+  border-radius: var(--janssen-radius-sm);
+  font-size: var(--janssen-font-size-sm);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--janssen-transition-fast),
+              transform var(--janssen-transition-fast);
+}
+
+.product-btn:active {
+  transform: scale(0.98);
+}
+
+.product-btn-primary {
+  background: var(--janssen-primary);
+  color: var(--janssen-white);
+}
+
+.product-btn-primary:hover {
+  background: var(--janssen-primary-dark);
+}
+
+.product-btn-secondary {
+  background: var(--janssen-gray-200);
+  color: var(--janssen-black);
+}
+
+.product-btn-secondary:hover {
+  background: var(--janssen-gray-300);
+}
+
+/* ============================================
+   TYPING INDICATOR
+   ============================================ */
+
+.janssen-typing-indicator {
+  display: flex;
+  align-items: center;
+  gap: var(--janssen-space-xs);
+  padding: var(--janssen-space-sm) var(--janssen-space-md);
+  background: var(--janssen-white);
+  border-radius: var(--janssen-radius-md);
+  margin: 0 var(--janssen-space-md);
+  width: fit-content;
+  border: 1px solid var(--janssen-gray-200);
+}
+
+.typing-dot {
+  width: 8px;
+  height: 8px;
+  background: var(--janssen-gray-400);
+  border-radius: var(--janssen-radius-full);
+  animation: typingBounce 1.4s infinite ease-in-out both;
+}
+
+.typing-dot:nth-child(1) {
+  animation-delay: -0.32s;
+}
+
+.typing-dot:nth-child(2) {
+  animation-delay: -0.16s;
+}
+
+.typing-dot:nth-child(3) {
+  animation-delay: 0s;
+}
+
+@keyframes typingBounce {
+  0%, 80%, 100% {
+    transform: scale(0.8);
+    opacity: 0.5;
+  }
+  40% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.typing-text {
+  font-size: var(--janssen-font-size-sm);
+  color: var(--janssen-gray-500);
+  margin-left: var(--janssen-space-xs);
+}
+
+/* RTL: Typing text margin */
+.janssen-chat-container[dir="rtl"] .typing-text {
+  margin-left: 0;
+  margin-right: var(--janssen-space-xs);
+}
+
+/* ============================================
+   INPUT AREA
+   ============================================ */
+
+.janssen-chat-input {
+  display: flex;
+  align-items: center;
+  gap: var(--janssen-space-sm);
+  padding: var(--janssen-space-md);
+  background: var(--janssen-white);
+  border-top: 1px solid var(--janssen-gray-200);
+}
+
+.message-input {
+  flex: 1;
+  padding: var(--janssen-space-sm) var(--janssen-space-md);
+  border: 1px solid var(--janssen-gray-300);
+  border-radius: var(--janssen-radius-lg);
+  font-size: var(--janssen-font-size-md);
+  font-family: inherit;
+  outline: none;
+  transition: border-color var(--janssen-transition-fast),
+              box-shadow var(--janssen-transition-fast);
+}
+
+.message-input:focus {
+  border-color: var(--janssen-primary);
+  box-shadow: 0 0 0 3px rgba(196, 30, 58, 0.1);
+}
+
+.message-input::placeholder {
+  color: var(--janssen-gray-400);
+}
+
+/* RTL: Input text direction */
+.janssen-chat-container[dir="rtl"] .message-input {
+  text-align: right;
+}
+
+.send-button {
+  width: 44px;
+  height: 44px;
+  border: none;
+  background: var(--janssen-primary);
+  color: var(--janssen-white);
+  border-radius: var(--janssen-radius-full);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--janssen-transition-fast),
+              transform var(--janssen-transition-fast);
+  flex-shrink: 0;
+}
+
+.send-button:hover {
+  background: var(--janssen-primary-dark);
+}
+
+.send-button:active {
+  transform: scale(0.95);
+}
+
+/* RTL: Rotate send icon */
+.janssen-chat-container[dir="rtl"] .send-button svg {
+  transform: scaleX(-1);
+}
+
+/* ============================================
+   LOCKED INPUT STATE (After Escalation)
+   ============================================ */
+
+.message-input.is-locked {
+  background: var(--janssen-gray-100);
+  color: var(--janssen-gray-500);
+  cursor: not-allowed;
+  border-color: var(--janssen-gray-200);
+}
+
+.message-input.is-locked::placeholder {
+  color: var(--janssen-gray-500);
+}
+
+.send-button.is-locked {
+  background: var(--janssen-gray-300);
+  cursor: not-allowed;
+}
+
+.send-button.is-locked:hover {
+  background: var(--janssen-gray-300);
+  transform: none;
+}
+
+/* ============================================
+   ENHANCED PRODUCT CARDS
+   ============================================ */
+
+.janssen-product-card {
+  background: var(--janssen-white);
+  border-radius: var(--janssen-radius-md);
+  overflow: hidden;
+  border: 1px solid var(--janssen-gray-200);
+  max-width: 280px;
+  box-shadow: var(--janssen-shadow-sm);
+}
+
+.janssen-product-card .product-image {
+  width: 100%;
+  height: 160px;
+  object-fit: cover;
+  background: var(--janssen-gray-100);
+}
+
+.janssen-product-card .product-image-placeholder {
+  width: 100%;
+  height: 160px;
+  background: var(--janssen-gray-100);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--janssen-gray-400);
+}
+
+.janssen-product-card .product-info {
+  padding: var(--janssen-space-md);
+}
+
+.janssen-product-card .product-name {
+  margin: 0 0 var(--janssen-space-xs);
+  font-size: var(--janssen-font-size-lg);
+  font-weight: 600;
+  color: var(--janssen-black);
+}
+
+.janssen-product-card .product-description {
+  margin: 0 0 var(--janssen-space-sm);
+  font-size: var(--janssen-font-size-sm);
+  color: var(--janssen-gray-500);
+  line-height: 1.5;
+}
+
+.janssen-product-card .product-warranty {
+  display: inline-block;
+  font-size: var(--janssen-font-size-sm);
+  color: var(--janssen-success);
+  margin-bottom: var(--janssen-space-sm);
+}
+
+.janssen-product-card .product-price {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--janssen-primary);
+  margin-bottom: var(--janssen-space-md);
+}
+
+.janssen-product-card .product-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--janssen-space-sm);
+}
+
+.janssen-product-card .product-btn {
+  width: 100%;
+  padding: var(--janssen-space-sm) var(--janssen-space-md);
+  border: none;
+  border-radius: var(--janssen-radius-sm);
+  font-size: var(--janssen-font-size-md);
+  font-weight: 500;
+  cursor: pointer;
+  text-align: center;
+  text-decoration: none;
+  transition: background var(--janssen-transition-fast),
+              transform var(--janssen-transition-fast);
+}
+
+.janssen-product-card .product-btn:hover {
+  transform: translateY(-1px);
+}
+
+.janssen-product-card .product-btn:active {
+  transform: translateY(0);
+}
+
+.janssen-product-card .product-btn-primary {
+  background: var(--janssen-primary);
+  color: var(--janssen-white);
+}
+
+.janssen-product-card .product-btn-primary:hover {
+  background: var(--janssen-primary-dark);
+}
+
+/* Handover message styling */
+.message-bot .message-bubble.handover-message {
+  background: linear-gradient(135deg, var(--janssen-gray-100), var(--janssen-white));
+  border: 1px solid var(--janssen-primary);
+  border-left: 4px solid var(--janssen-primary);
+}
+
+.janssen-chat-container[dir="rtl"] .message-bot .message-bubble.handover-message {
+  border-left: 1px solid var(--janssen-primary);
+  border-right: 4px solid var(--janssen-primary);
+}
+
+/* ============================================
+   FOOTER
+   ============================================ */
+
+.janssen-chat-footer {
+  padding: var(--janssen-space-sm);
+  text-align: center;
+  background: var(--janssen-gray-100);
+  border-top: 1px solid var(--janssen-gray-200);
+}
+
+.powered-by {
+  font-size: 10px;
+  color: var(--janssen-gray-500);
+}
+
+/* ============================================
+   RESPONSIVE DESIGN
+   ============================================ */
+
+/* Mobile devices */
+@media screen and (max-width: 480px) {
+  .janssen-chat-container {
+    bottom: var(--janssen-space-md) !important;
+    right: var(--janssen-space-md) !important;
+    left: var(--janssen-space-md) !important;
+  }
+  
+  .janssen-chat-window {
+    width: calc(100vw - 32px);
+    height: calc(100vh - 120px);
+    max-height: calc(100vh - 120px);
+    right: 0 !important;
+    left: 0 !important;
+  }
+  
+  .janssen-chat-container[dir="rtl"] .janssen-chat-window {
+    right: 0 !important;
+    left: 0 !important;
+  }
+  
+  .janssen-chat-toggle {
+    width: 56px;
+    height: 56px;
+  }
+}
+
+/* Tablet and small laptops */
+@media screen and (max-width: 768px) {
+  :root {
+    --janssen-widget-width: 340px;
+    --janssen-widget-height: 500px;
+  }
+}
+
+/* ============================================
+   ANIMATIONS
+   ============================================ */
+
+/* Message appear animation */
+.message-wrapper {
+  animation: messageAppear 0.3s ease-out;
+}
+
+@keyframes messageAppear {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ============================================
+   ACCESSIBILITY
+   ============================================ */
+
+/* Focus visible styles */
+.janssen-chat-toggle:focus-visible,
+.send-button:focus-visible,
+.product-btn:focus-visible,
+.message-input:focus-visible,
+.header-actions button:focus-visible {
+  outline: 2px solid var(--janssen-primary);
+  outline-offset: 2px;
+}
+
+/* Reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+  .janssen-chat-container,
+  .janssen-chat-container * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
