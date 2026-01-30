@@ -1,0 +1,44 @@
+<!--
+  JANSSEN AI CHAT WIDGET - EMBED CODE
+  Copy this code to your website's HTML (before </body>)
+-->
+
+<!-- Option 1: Self-hosted (recommended for production) -->
+<script>
+  // Configure webhook URL (REQUIRED)
+  window.JANSSEN_WEBHOOK_URL = 'https://n8n-2-7fw9.onrender.com/webhook/janssen-ai-incoming';
+  
+  // Optional: Pass customer ID if logged in
+  // window.JANSSEN_CUSTOMER_ID = 'customer_123';
+</script>
+<link rel="stylesheet" href="https://your-domain.com/widget/styles.css">
+<script src="https://your-domain.com/widget/widget.js"></script>
+
+
+<!-- Option 2: CDN/Quick Test (use your actual file URLs) -->
+<!--
+<script>
+  window.JANSSEN_WEBHOOK_URL = 'https://n8n-2-7fw9.onrender.com/webhook/janssen-ai-incoming';
+</script>
+<link rel="stylesheet" href="./styles.css">
+<script src="./widget.js"></script>
+-->
+
+
+<!-- USAGE EXAMPLES -->
+<script>
+// Open chat programmatically
+// JanssenChat.open();
+
+// Close chat
+// JanssenChat.close();
+
+// Set language
+// JanssenChat.setLanguage('ar'); // or 'en'
+
+// Send message programmatically
+// JanssenChat.sendMessage('مرحبا');
+
+// Check if escalated
+// console.log(JanssenChat.isLocked());
+</script>
