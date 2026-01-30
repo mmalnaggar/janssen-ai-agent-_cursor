@@ -1,0 +1,49 @@
+{
+  "name": "Janssen_AI_V3_DEBUG",
+  "nodes": [
+    {
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "parameters": {
+        "path": "janssen-ai-incoming",
+        "httpMethod": "POST",
+        "responseMode": "responseNode"
+      }
+    },
+    {
+      "id": "process",
+      "name": "Process",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [450, 300],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst msg = input.user_message || input.message || '';\nconst lang = input.language || (/[\\u0600-\\u06FF]/.test(msg) ? 'ar' : 'en');\n\n// Simple keyword check\nlet agent = 'support';\nlet intent = 'GENERAL';\nlet matched = [];\n\n// Arabic keywords\nif (msg.includes('سعر') || msg.includes('بكام') || msg.includes('كام')) {\n  agent = 'sales'; intent = 'SALES_PRICE'; matched.push('price_ar');\n}\nelse if (msg.includes('مشكلة') || msg.includes('شكوى')) {\n  agent = 'complaint'; intent = 'COMPLAINT'; matched.push('complaint_ar');\n}\nelse if (msg.includes('ضمان')) {\n  agent = 'warranty'; intent = 'WARRANTY'; matched.push('warranty_ar');\n}\nelse if (msg.includes('توصيل') || msg.includes('شحن')) {\n  agent = 'support'; intent = 'DELIVERY'; matched.push('delivery_ar');\n}\n// English keywords\nelse if (msg.toLowerCase().includes('price') || msg.toLowerCase().includes('cost')) {\n  agent = 'sales'; intent = 'SALES_PRICE'; matched.push('price_en');\n}\nelse if (msg.toLowerCase().includes('problem') || msg.toLowerCase().includes('complaint')) {\n  agent = 'complaint'; intent = 'COMPLAINT'; matched.push('complaint_en');\n}\nelse if (msg.toLowerCase().includes('warranty')) {\n  agent = 'warranty'; intent = 'WARRANTY'; matched.push('warranty_en');\n}\nelse if (msg.toLowerCase().includes('delivery') || msg.toLowerCase().includes('shipping')) {\n  agent = 'support'; intent = 'DELIVERY'; matched.push('delivery_en');\n}\n\n// Responses\nconst responses = {\n  sales: { ar: 'تمام! أسعارنا بتبدأ من 12,500 جنيه', en: 'Our prices start from 12,500 EGP' },\n  complaint: { ar: 'معلش جداً! ممكن تقولي إيه اللي حصل؟', en: 'I am sorry! Can you tell me what happened?' },\n  warranty: { ar: 'ضمان يانسن 10 سنين', en: 'Janssen warranty is 10 years' },\n  support: { ar: 'أهلاً! إزاي أقدر أساعدك؟', en: 'Hello! How can I help?' }\n};\n\nconst text = responses[agent]?.[lang] || responses.support[lang];\n\nreturn {\n  json: {\n    response: text,\n    agent: agent,\n    intent: intent,\n    matched: matched,\n    debug: {\n      received_message: msg,\n      detected_language: lang,\n      raw_input: input\n    }\n  }\n};"
+      }
+    },
+    {
+      "id": "respond",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [650, 300],
+      "parameters": {
+        "respondWith": "allIncomingItems",
+        "options": { "responseCode": 200 }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [[{ "node": "Process", "type": "main", "index": 0 }]]
+    },
+    "Process": {
+      "main": [[{ "node": "Respond", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "debug" }],
+  "meta": { "templateCredsSetupCompleted": true }
+}
