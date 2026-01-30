@@ -1,0 +1,176 @@
+{
+  "name": "Janssen_AI_Brain",
+  "nodes": [
+    {
+      "id": "node_webhook_in",
+      "name": "Webhook_In",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "parameters": {
+        "path": "janssen-ai-incoming",
+        "httpMethod": "POST",
+        "responseMode": "responseNode"
+      }
+    },
+    {
+      "id": "node_normalize_input",
+      "name": "Normalize_Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [450, 300],
+      "parameters": {
+        "jsCode": "// Normalize Input\nconst input = $input.first().json;\n\nfunction containsArabic(text) {\n  return /[\\u0600-\\u06FF]/.test(text);\n}\n\nfunction normalizeArabic(text) {\n  return text\n    .replace(/[\\u064B-\\u065F\\u0670]/g, '')\n    .replace(/[\\u0622\\u0623\\u0625]/g, '\\u0627')\n    .replace(/[\\u0649]/g, '\\u064A');\n}\n\nconst sessionId = input.session_id || `session_${Date.now()}`;\nconst channel = ['chat', 'voice', 'whatsapp'].includes(input.channel) ? input.channel : 'chat';\nlet userMessage = (input.user_message || input.message || '').trim();\nlet language = input.language;\n\nif (!language || !['ar', 'en'].includes(language)) {\n  language = containsArabic(userMessage) ? 'ar' : 'en';\n}\n\nlet normalizedMessage = language === 'ar' ? normalizeArabic(userMessage) : userMessage.toLowerCase();\n\nreturn {\n  json: {\n    session_id: sessionId,\n    channel: channel,\n    language: language,\n    user_message: userMessage,\n    normalized_message: normalizedMessage,\n    phone: input.phone || null,\n    metadata: input.metadata || {},\n    timestamp: new Date().toISOString()\n  }\n};"
+      }
+    },
+    {
+      "id": "node_detect_intent",
+      "name": "Detect_Intent",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [650, 300],
+      "parameters": {
+        "jsCode": "// Detect Intent\nconst input = $input.first().json;\nconst message = input.user_message || '';\nconst language = input.language || 'ar';\n\nconst intents = [\n  { intent: 'COMPLAINT', agent: 'complaint', ar: ['شكوى', 'مشكلة', 'زعلان', 'مش راضي'], en: ['complaint', 'problem', 'angry', 'not satisfied'] },\n  { intent: 'HUMAN_REQUEST', agent: 'escalation', ar: ['عايز اتكلم مع حد', 'موظف', 'خدمة عملاء'], en: ['talk to someone', 'human', 'customer service'] },\n  { intent: 'WARRANTY', agent: 'warranty', ar: ['ضمان', 'تفعيل الضمان', 'تصليح'], en: ['warranty', 'guarantee', 'repair'] },\n  { intent: 'SALES_PRICE', agent: 'sales', ar: ['سعر', 'بكام', 'كام', 'عروض', 'خصم'], en: ['price', 'cost', 'how much', 'discount'] },\n  { intent: 'SALES_RECOMMENDATION', agent: 'sales', ar: ['عايز اشتري', 'انصحني', 'افضل', 'مرتبة'], en: ['buy', 'recommend', 'best', 'mattress'] },\n  { intent: 'DELIVERY', agent: 'support', ar: ['توصيل', 'شحن', 'يوصل'], en: ['delivery', 'shipping'] },\n  { intent: 'GENERAL_SUPPORT', agent: 'support', ar: ['فين الفرع', 'عنوان', 'مواعيد'], en: ['store', 'address', 'hours'] }\n];\n\nlet detectedIntent = 'GENERAL_SUPPORT';\nlet targetAgent = 'support';\nlet confidence = 0.5;\nlet matchedKeywords = [];\n\nfor (const def of intents) {\n  const keywords = language === 'ar' ? def.ar : def.en;\n  const matches = keywords.filter(k => message.includes(k));\n  if (matches.length > 0) {\n    detectedIntent = def.intent;\n    targetAgent = def.agent;\n    confidence = Math.min(0.95, 0.5 + (matches.length * 0.15));\n    matchedKeywords = matches;\n    break;\n  }\n}\n\nconst legalKeywords = language === 'ar' ? ['محامي', 'قانون', 'شرطة'] : ['lawyer', 'legal', 'police'];\nconst mediaKeywords = language === 'ar' ? ['هنشر', 'فيسبوك', 'سوشيال'] : ['post', 'facebook', 'social media'];\nlet forceEscalation = false;\nlet escalationReason = null;\n\nfor (const kw of [...legalKeywords, ...mediaKeywords]) {\n  if (message.includes(kw)) {\n    forceEscalation = true;\n    escalationReason = legalKeywords.includes(kw) ? 'legal_threat' : 'media_threat';\n    detectedIntent = 'HUMAN_REQUEST';\n    targetAgent = 'escalation';\n    confidence = 1.0;\n    break;\n  }\n}\n\nreturn {\n  json: {\n    ...input,\n    intent: detectedIntent,\n    agent_used: targetAgent,\n    confidence: confidence,\n    matched_keywords: matchedKeywords,\n    force_escalation: forceEscalation,\n    escalation_reason: escalationReason\n  }\n};"
+      }
+    },
+    {
+      "id": "node_load_agent",
+      "name": "Load_Agent_Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [850, 300],
+      "parameters": {
+        "jsCode": "// Load Agent Config\nconst input = $input.first().json;\nconst agent = input.agent_used || 'support';\n\nconst agentConfigs = {\n  sales: {\n    name: 'Sales Agent',\n    tone_ar: 'ودود ومقنع',\n    tone_en: 'Friendly and persuasive',\n    allowed_actions: ['FETCH_PRODUCT', 'FETCH_PRICE', 'RECOMMEND_PRODUCT']\n  },\n  support: {\n    name: 'Support Agent',\n    tone_ar: 'هادئ ومساعد',\n    tone_en: 'Calm and helpful',\n    allowed_actions: ['ANSWER_FAQ', 'FETCH_DELIVERY_INFO', 'FETCH_STORE_INFO']\n  },\n  warranty: {\n    name: 'Warranty Agent',\n    tone_ar: 'محترف ومتفهم',\n    tone_en: 'Professional and understanding',\n    allowed_actions: ['EXPLAIN_WARRANTY', 'COLLECT_CLAIM_DETAILS']\n  },\n  complaint: {\n    name: 'Complaint Agent',\n    tone_ar: 'متعاطف ومعتذر',\n    tone_en: 'Empathetic and apologetic',\n    allowed_actions: ['ACKNOWLEDGE_COMPLAINT', 'COLLECT_DETAILS', 'ESCALATE']\n  },\n  escalation: {\n    name: 'Escalation Agent',\n    tone_ar: 'مهني',\n    tone_en: 'Professional',\n    allowed_actions: ['TRANSFER_TO_HUMAN']\n  }\n};\n\nreturn {\n  json: {\n    ...input,\n    agent_config: agentConfigs[agent] || agentConfigs.support\n  }\n};"
+      }
+    },
+    {
+      "id": "node_check_escalation",
+      "name": "Check_Escalation",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1050, 300],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "conditions": [
+            { "id": "c1", "leftValue": "={{ $json.agent_used }}", "rightValue": "escalation", "operator": { "type": "string", "operation": "equals" } },
+            { "id": "c2", "leftValue": "={{ $json.force_escalation }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }
+          ],
+          "combinator": "or"
+        }
+      }
+    },
+    {
+      "id": "node_fetch_knowledge",
+      "name": "Fetch_Knowledge",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1250, 200],
+      "parameters": {
+        "jsCode": "// Fetch Knowledge (Placeholder)\nconst input = $input.first().json;\n\nconst knowledge = {\n  products: [\n    { id: 'prod_001', name_ar: 'مرتبة يانسن أورثوبيديك', name_en: 'Janssen Orthopedic', price: 12500 },\n    { id: 'prod_002', name_ar: 'مرتبة يانسن ميموري فوم', name_en: 'Janssen Memory Foam', price: 15000 }\n  ],\n  delivery: {\n    cairo: { ar: '2-3 أيام عمل', en: '2-3 business days' },\n    other: { ar: '5-7 أيام عمل', en: '5-7 business days' }\n  },\n  warranty: { years: 10 }\n};\n\nreturn { json: { ...input, knowledge: knowledge } };"
+      }
+    },
+    {
+      "id": "node_apply_rules",
+      "name": "Apply_Business_Rules",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1450, 200],
+      "parameters": {
+        "jsCode": "// Apply Business Rules\nconst input = $input.first().json;\n\nconst forbidden = [\n  'Invent information',\n  'Make promises about delivery dates',\n  'Approve or reject warranty claims',\n  'Offer unauthorized discounts'\n];\n\nreturn { json: { ...input, forbidden_actions: forbidden, rules_applied: true } };"
+      }
+    },
+    {
+      "id": "node_generate_response",
+      "name": "Generate_Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1650, 200],
+      "parameters": {
+        "jsCode": "// Generate Response\nconst input = $input.first().json;\nconst lang = input.language || 'ar';\nconst agent = input.agent_used;\nconst intent = input.intent;\n\nlet responseText = '';\n\nswitch (agent) {\n  case 'sales':\n    if (intent === 'SALES_PRICE') {\n      responseText = lang === 'ar' \n        ? 'تمام! أسعار المراتب عندنا بتبدأ من 12,500 جنيه. عايز تعرف تفاصيل أكتر؟'\n        : 'Great! Our mattress prices start from 12,500 EGP. Would you like more details?';\n    } else {\n      responseText = lang === 'ar'\n        ? 'أهلاً! أنا هنا أساعدك تختار المرتبة المناسبة ليك.'\n        : \"Hello! I'm here to help you choose the right mattress.\";\n    }\n    break;\n  case 'support':\n    if (intent === 'DELIVERY') {\n      responseText = lang === 'ar'\n        ? 'التوصيل للقاهرة والجيزة خلال 2-3 أيام عمل. باقي المحافظات 5-7 أيام.'\n        : 'Delivery to Cairo/Giza is 2-3 business days. Other areas 5-7 days.';\n    } else {\n      responseText = lang === 'ar'\n        ? 'أهلاً! أنا هنا أساعدك. اتفضل اسألني!'\n        : \"Hello! I'm here to help. Please ask me anything!\";\n    }\n    break;\n  case 'warranty':\n    responseText = lang === 'ar'\n      ? 'ضمان يانسن 10 سنين وبيغطي عيوب الصناعة. محتاج مساعدة في الضمان؟'\n      : 'Janssen warranty is 10 years covering manufacturing defects. Need help?';\n    break;\n  case 'complaint':\n    responseText = lang === 'ar'\n      ? 'معلش جداً على اللي حصل. فاهم زعلك تماماً. ممكن تقولي إيه اللي حصل بالظبط؟'\n      : \"I'm truly sorry about what happened. Can you tell me what exactly occurred?\";\n    break;\n  default:\n    responseText = lang === 'ar' ? 'أهلاً! إزاي أقدر أساعدك؟' : 'Hello! How can I help?';\n}\n\nreturn {\n  json: {\n    ...input,\n    response_text: responseText,\n    response_type: 'text',\n    escalated: false\n  }\n};"
+      }
+    },
+    {
+      "id": "node_escalate",
+      "name": "Escalate_To_Human",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1250, 400],
+      "parameters": {
+        "jsCode": "// Escalate to Human\nconst input = $input.first().json;\nconst lang = input.language || 'ar';\n\nconst message = lang === 'ar'\n  ? 'هحولك دلوقتي لأحد موظفين خدمة العملاء. استنى لحظة من فضلك.'\n  : \"I'm connecting you to customer service now. Please hold.\";\n\nlet queue = 'support_queue';\nlet priority = 'normal';\n\nif (input.escalation_reason === 'legal_threat' || input.escalation_reason === 'media_threat') {\n  queue = 'priority_queue';\n  priority = 'critical';\n} else if (input.intent === 'COMPLAINT') {\n  queue = 'complaints_queue';\n  priority = 'high';\n}\n\nreturn {\n  json: {\n    ...input,\n    response_text: message,\n    response_type: 'handover',\n    escalated: true,\n    escalation_queue: queue,\n    escalation_priority: priority\n  }\n};"
+      }
+    },
+    {
+      "id": "node_log_interaction",
+      "name": "Log_Interaction",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1850, 300],
+      "parameters": {
+        "jsCode": "// Log and Format Response\nconst input = $input.first().json;\n\nconsole.log('[LOG]', JSON.stringify({\n  session_id: input.session_id,\n  agent_used: input.agent_used,\n  intent: input.intent,\n  timestamp: new Date().toISOString()\n}));\n\n// Return clean response\nreturn {\n  json: {\n    response_type: input.response_type || 'text',\n    content: {\n      text: input.response_text\n    },\n    next_action: input.escalated ? 'transfer_to_human' : 'await_response',\n    agent_used: input.agent_used,\n    confidence_score: input.confidence,\n    session_id: input.session_id\n  }\n};"
+      }
+    },
+    {
+      "id": "node_return_response",
+      "name": "Return_Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2050, 300],
+      "parameters": {
+        "respondWith": "allIncomingItems",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook_In": {
+      "main": [[{ "node": "Normalize_Input", "type": "main", "index": 0 }]]
+    },
+    "Normalize_Input": {
+      "main": [[{ "node": "Detect_Intent", "type": "main", "index": 0 }]]
+    },
+    "Detect_Intent": {
+      "main": [[{ "node": "Load_Agent_Config", "type": "main", "index": 0 }]]
+    },
+    "Load_Agent_Config": {
+      "main": [[{ "node": "Check_Escalation", "type": "main", "index": 0 }]]
+    },
+    "Check_Escalation": {
+      "main": [
+        [{ "node": "Escalate_To_Human", "type": "main", "index": 0 }],
+        [{ "node": "Fetch_Knowledge", "type": "main", "index": 0 }]
+      ]
+    },
+    "Fetch_Knowledge": {
+      "main": [[{ "node": "Apply_Business_Rules", "type": "main", "index": 0 }]]
+    },
+    "Apply_Business_Rules": {
+      "main": [[{ "node": "Generate_Response", "type": "main", "index": 0 }]]
+    },
+    "Generate_Response": {
+      "main": [[{ "node": "Log_Interaction", "type": "main", "index": 0 }]]
+    },
+    "Escalate_To_Human": {
+      "main": [[{ "node": "Log_Interaction", "type": "main", "index": 0 }]]
+    },
+    "Log_Interaction": {
+      "main": [[{ "node": "Return_Response", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all"
+  },
+  "staticData": null,
+  "tags": [
+    { "name": "janssen-ai" },
+    { "name": "production" }
+  ],
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

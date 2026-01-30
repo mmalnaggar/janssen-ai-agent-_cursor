@@ -1,0 +1,49 @@
+{
+  "name": "Janssen_AI_V4_FIXED",
+  "nodes": [
+    {
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "parameters": {
+        "path": "janssen-ai-incoming",
+        "httpMethod": "POST",
+        "responseMode": "responseNode"
+      }
+    },
+    {
+      "id": "process",
+      "name": "Process",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [450, 300],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\n// FIX: Get data from body (webhook wraps POST data in body)\nconst body = input.body || input;\nconst msg = body.user_message || body.message || '';\nconst lang = body.language || (/[\\u0600-\\u06FF]/.test(msg) ? 'ar' : 'en');\nconst sessionId = body.session_id || 'session_' + Date.now();\nconst channel = body.channel || 'chat';\n\n// Intent detection\nlet agent = 'support';\nlet intent = 'GENERAL';\nlet matched = [];\n\n// Arabic keywords\nif (msg.includes('سعر') || msg.includes('بكام') || msg.includes('كام')) {\n  agent = 'sales'; intent = 'SALES_PRICE'; matched.push('price_ar');\n}\nelse if (msg.includes('مشكلة') || msg.includes('شكوى')) {\n  agent = 'complaint'; intent = 'COMPLAINT'; matched.push('complaint_ar');\n}\nelse if (msg.includes('ضمان')) {\n  agent = 'warranty'; intent = 'WARRANTY'; matched.push('warranty_ar');\n}\nelse if (msg.includes('توصيل') || msg.includes('شحن')) {\n  agent = 'support'; intent = 'DELIVERY'; matched.push('delivery_ar');\n}\nelse if (msg.includes('مرتبة') || msg.includes('اشتري')) {\n  agent = 'sales'; intent = 'SALES'; matched.push('sales_ar');\n}\n// English keywords\nelse if (msg.toLowerCase().includes('price') || msg.toLowerCase().includes('cost') || msg.toLowerCase().includes('how much')) {\n  agent = 'sales'; intent = 'SALES_PRICE'; matched.push('price_en');\n}\nelse if (msg.toLowerCase().includes('problem') || msg.toLowerCase().includes('complaint') || msg.toLowerCase().includes('issue')) {\n  agent = 'complaint'; intent = 'COMPLAINT'; matched.push('complaint_en');\n}\nelse if (msg.toLowerCase().includes('warranty') || msg.toLowerCase().includes('guarantee')) {\n  agent = 'warranty'; intent = 'WARRANTY'; matched.push('warranty_en');\n}\nelse if (msg.toLowerCase().includes('delivery') || msg.toLowerCase().includes('shipping')) {\n  agent = 'support'; intent = 'DELIVERY'; matched.push('delivery_en');\n}\nelse if (msg.toLowerCase().includes('mattress') || msg.toLowerCase().includes('buy')) {\n  agent = 'sales'; intent = 'SALES'; matched.push('sales_en');\n}\n\n// Generate response\nconst responses = {\n  sales: {\n    SALES_PRICE: { ar: 'تمام! أسعار المراتب عندنا بتبدأ من 12,500 جنيه. عايز تعرف تفاصيل أكتر؟', en: 'Great! Our mattress prices start from 12,500 EGP. Would you like more details?' },\n    SALES: { ar: 'أهلاً! أنا هنا أساعدك تختار المرتبة المناسبة ليك.', en: 'Hello! I am here to help you choose the right mattress.' }\n  },\n  complaint: {\n    COMPLAINT: { ar: 'معلش جداً على اللي حصل. فاهم زعلك تماماً. ممكن تقولي إيه اللي حصل بالظبط؟', en: 'I am truly sorry about what happened. Can you tell me what exactly occurred?' }\n  },\n  warranty: {\n    WARRANTY: { ar: 'ضمان يانسن 10 سنين وبيغطي عيوب الصناعة. محتاج مساعدة في الضمان؟', en: 'Janssen warranty is 10 years covering manufacturing defects. Need help?' }\n  },\n  support: {\n    DELIVERY: { ar: 'التوصيل للقاهرة والجيزة خلال 2-3 أيام عمل. باقي المحافظات 5-7 أيام.', en: 'Delivery to Cairo/Giza is 2-3 business days. Other areas 5-7 days.' },\n    GENERAL: { ar: 'أهلاً! أنا هنا أساعدك. اتفضل اسألني!', en: 'Hello! I am here to help. Please ask me anything!' }\n  }\n};\n\nconst text = responses[agent]?.[intent]?.[lang] || responses.support.GENERAL[lang];\n\nreturn {\n  json: {\n    response_type: 'text',\n    content: { text: text },\n    next_action: 'await_response',\n    agent_used: agent,\n    intent: intent,\n    confidence_score: matched.length > 0 ? 0.85 : 0.5,\n    session_id: sessionId,\n    matched_keywords: matched,\n    language: lang\n  }\n};"
+      }
+    },
+    {
+      "id": "respond",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [650, 300],
+      "parameters": {
+        "respondWith": "allIncomingItems",
+        "options": { "responseCode": 200 }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [[{ "node": "Process", "type": "main", "index": 0 }]]
+    },
+    "Process": {
+      "main": [[{ "node": "Respond", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "janssen-ai" }, { "name": "fixed" }],
+  "meta": { "templateCredsSetupCompleted": true }
+}
