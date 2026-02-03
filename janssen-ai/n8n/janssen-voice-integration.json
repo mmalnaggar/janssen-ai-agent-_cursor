@@ -1,0 +1,101 @@
+{
+  "name": "Janssen_Voice_Agent",
+  "nodes": [
+    {
+      "id": "voice_webhook",
+      "name": "1_Voice_Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [100, 400],
+      "parameters": {
+        "path": "janssen-voice",
+        "httpMethod": "POST",
+        "responseMode": "responseNode"
+      }
+    },
+    {
+      "id": "parse_voice",
+      "name": "2_Parse_Voice",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [350, 400],
+      "parameters": {
+        "jsCode": "const rawInput = $input.first().json;\nconst body = rawInput.body || rawInput;\n\nlet speechResult = body.SpeechResult || body.speech_result || body.transcript || '';\nlet callerNumber = body.From || body.Caller || body.caller_id || '';\nlet callSid = body.CallSid || body.call_id || '';\n\nfunction containsArabic(text) {\n  return /[\\u0600-\\u06FF]/.test(text);\n}\n\nconst language = containsArabic(speechResult) ? 'ar' : 'en';\nconst sessionId = 'voice_' + (callSid || Date.now());\n\nreturn {\n  json: {\n    user_message: speechResult.trim(),\n    session_id: sessionId,\n    channel: 'voice',\n    language: language,\n    phone: callerNumber,\n    call_id: callSid,\n    timestamp: new Date().toISOString()\n  }\n};"
+      }
+    },
+    {
+      "id": "detect_intent",
+      "name": "3_Detect_Intent",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [600, 400],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst msg = input.user_message.toLowerCase();\nconst lang = input.language;\n\nconst intents = [\n  { intent: 'COMPLAINT', agent: 'escalation', ar: ['شكوى', 'مشكلة', 'زعلان'], en: ['complaint', 'problem', 'angry'] },\n  { intent: 'HUMAN', agent: 'escalation', ar: ['موظف', 'حد', 'بني آدم'], en: ['human', 'person', 'agent'] },\n  { intent: 'PRICE', agent: 'sales', ar: ['سعر', 'بكام', 'كام'], en: ['price', 'cost', 'how much'] },\n  { intent: 'WARRANTY', agent: 'warranty', ar: ['ضمان', 'تصليح'], en: ['warranty', 'repair'] },\n  { intent: 'DELIVERY', agent: 'support', ar: ['توصيل', 'شحن'], en: ['delivery', 'shipping'] },\n  { intent: 'STORE', agent: 'support', ar: ['فرع', 'عنوان'], en: ['store', 'branch', 'address'] },\n  { intent: 'ORDER', agent: 'sales', ar: ['طلب', 'اشتري'], en: ['order', 'buy', 'purchase'] }\n];\n\nlet detected = { intent: 'GENERAL', agent: 'support', confidence: 0.5 };\n\nfor (const def of intents) {\n  const keywords = lang === 'ar' ? def.ar : def.en;\n  if (keywords.some(k => msg.includes(k))) {\n    detected = { intent: def.intent, agent: def.agent, confidence: 0.8 };\n    break;\n  }\n}\n\nreturn { json: { ...input, ...detected } };"
+      }
+    },
+    {
+      "id": "generate_response",
+      "name": "4_Generate_Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [850, 400],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst lang = input.language;\nconst intent = input.intent;\n\nconst responses = {\n  ar: {\n    PRICE: 'أسعارنا بتبدأ من عشر تلاف جنيه. عايز تعرف عن موديل معين؟',\n    WARRANTY: 'الضمان عشر سنين على كل المراتب. محتاج مساعدة؟',\n    DELIVERY: 'التوصيل في القاهرة يومين لتلاتة. إنت فين؟',\n    STORE: 'عندنا فرع في مدينة نصر وفرع في المهندسين.',\n    ORDER: 'تمام. عايز مرتبة إيه؟',\n    COMPLAINT: 'معلش على اللي حصل. هحولك لخدمة العملاء.',\n    HUMAN: 'هحولك لأحد الموظفين. استنى لحظة.',\n    GENERAL: 'أهلاً بيك في يانسن. إزاي أقدر أساعدك؟'\n  },\n  en: {\n    PRICE: 'Our prices start from ten thousand pounds. Want details?',\n    WARRANTY: 'We offer ten year warranty. Need help?',\n    DELIVERY: 'Delivery in Cairo takes two to three days. Where are you?',\n    STORE: 'We have branches in Nasr City and Mohandessin.',\n    ORDER: 'Great. Which mattress would you like?',\n    COMPLAINT: 'I apologize. Let me transfer you to customer service.',\n    HUMAN: 'Connecting you to a representative. Please hold.',\n    GENERAL: 'Welcome to Janssen. How can I help you?'\n  }\n};\n\nconst text = responses[lang][intent] || responses[lang].GENERAL;\nconst escalate = ['COMPLAINT', 'HUMAN'].includes(intent);\n\nreturn {\n  json: {\n    ...input,\n    response_text: text,\n    escalate: escalate\n  }\n};"
+      }
+    },
+    {
+      "id": "format_response",
+      "name": "5_Format_Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 400],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst lang = input.language;\nconst voice = lang === 'ar' ? 'Polly.Zeina' : 'Polly.Joanna';\n\nlet twiml = '<?xml version=\"1.0\" encoding=\"UTF-8\"?>';\ntwiml += '<Response>';\n\nif (input.escalate) {\n  twiml += '<Say voice=\"' + voice + '\">' + input.response_text + '</Say>';\n  twiml += '<Dial timeout=\"30\"><Number>+20XXXXXXXXXX</Number></Dial>';\n} else {\n  twiml += '<Say voice=\"' + voice + '\">' + input.response_text + '</Say>';\n  twiml += '<Gather input=\"speech\" timeout=\"5\" language=\"' + (lang === 'ar' ? 'ar-EG' : 'en-US') + '\">';\n  twiml += '<Say voice=\"' + voice + '\">' + (lang === 'ar' ? 'تفضل.' : 'Go ahead.') + '</Say>';\n  twiml += '</Gather>';\n}\n\ntwiml += '</Response>';\n\nreturn {\n  json: {\n    twiml: twiml,\n    response_type: 'voice',\n    text: input.response_text,\n    language: input.language,\n    intent: input.intent,\n    agent_used: input.agent,\n    session_id: input.session_id,\n    escalate: input.escalate\n  }\n};"
+      }
+    },
+    {
+      "id": "respond",
+      "name": "6_Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1350, 400],
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.twiml }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/xml"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "connections": {
+    "1_Voice_Webhook": {
+      "main": [[{ "node": "2_Parse_Voice", "type": "main", "index": 0 }]]
+    },
+    "2_Parse_Voice": {
+      "main": [[{ "node": "3_Detect_Intent", "type": "main", "index": 0 }]]
+    },
+    "3_Detect_Intent": {
+      "main": [[{ "node": "4_Generate_Response", "type": "main", "index": 0 }]]
+    },
+    "4_Generate_Response": {
+      "main": [[{ "node": "5_Format_Response", "type": "main", "index": 0 }]]
+    },
+    "5_Format_Response": {
+      "main": [[{ "node": "6_Respond", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [{ "name": "janssen-ai" }, { "name": "voice" }],
+  "meta": { "version": "1.0.0", "description": "POST /webhook/janssen-voice – Twilio-style voice; returns TwiML. Set Dial number for escalation." }
+}

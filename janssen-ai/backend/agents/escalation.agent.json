@@ -1,0 +1,10 @@
+{
+  "agent_name": "escalation",
+  "role": "Human Escalation Handler",
+  "action": "ESCALATE_TO_HUMAN",
+  "messages": {
+    "ar": "هحولك لخدمة العملاء حالاً",
+    "en": "Connecting you to customer service"
+  },
+  "priority": "high"
+}

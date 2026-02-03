@@ -1,0 +1,21 @@
+{
+  "agent_name": "router",
+  "role": "Intent Router",
+  "description": "Routes customer messages to the correct agent based on intent",
+  "supported_languages": ["ar", "en"],
+  "intents": {
+    "SALES_PRICE": "sales",
+    "SALES_RECOMMENDATION": "sales",
+    "PRODUCT_INQUIRY": "sales",
+    "DISCOUNT_REQUEST": "sales",
+    "PURCHASE_INTENT": "sales",
+    "DELIVERY": "support",
+    "STORE_INFO": "support",
+    "WARRANTY": "warranty",
+    "COMPLAINT": "complaint",
+    "HUMAN_REQUEST": "escalation",
+    "GREETING": "support",
+    "GENERAL": "support"
+  },
+  "default_agent": "support"
+}

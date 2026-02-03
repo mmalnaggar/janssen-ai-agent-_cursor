@@ -1,0 +1,195 @@
+{
+  "widget": {
+    "name": "Janssen AI Chatbot",
+    "version": "2.0.0",
+    "status": "production",
+    "description": "Floating chatbot widget for Janssen - integrated with n8n AI backend"
+  },
+  "appearance": {
+    "position": "bottom-right",
+    "theme": "light",
+    "brandColor": "#C41E3A",
+    "secondaryColor": "#4A4A4A",
+    "borderRadius": "16px",
+    "shadow": "large"
+  },
+  "dimensions": {
+    "widgetWidth": "380px",
+    "widgetHeight": "600px",
+    "toggleButtonSize": "60px",
+    "mobileBreakpoint": "480px"
+  },
+  "language": {
+    "default": "ar",
+    "supported": ["ar", "en"],
+    "autoDetect": false,
+    "rtlLanguages": ["ar"]
+  },
+  "strings": {
+    "ar": {
+      "title": "يانسن",
+      "subtitle": "مساعدك الذكي",
+      "placeholder": "اكتب رسالتك هنا...",
+      "sendButton": "إرسال",
+      "welcomeMessage": "أهلاً بيك في يانسن! 👋 إزاي أقدر أساعدك النهاردة؟",
+      "typingIndicator": "جاري الكتابة...",
+      "productViewButton": "عرض المنتج",
+      "productAddToCart": "أضف للسلة",
+      "poweredBy": "مدعوم بالذكاء الاصطناعي",
+      "errorMessage": "حصلت مشكلة، حاول تاني لو سمحت",
+      "offlineMessage": "أنت غير متصل بالإنترنت",
+      "reconnectButton": "إعادة الاتصال",
+      "inputDisabled": "تم تحويلك لخدمة العملاء"
+    },
+    "en": {
+      "title": "Janssen",
+      "subtitle": "AI Assistant",
+      "placeholder": "Type your message...",
+      "sendButton": "Send",
+      "welcomeMessage": "Welcome to Janssen! 👋 How can I help you today?",
+      "typingIndicator": "Typing...",
+      "productViewButton": "View Product",
+      "productAddToCart": "Add to Cart",
+      "poweredBy": "Powered by AI",
+      "errorMessage": "Something went wrong, please try again",
+      "offlineMessage": "You are offline",
+      "reconnectButton": "Reconnect",
+      "inputDisabled": "Connected to customer service"
+    }
+  },
+  "messages": {
+    "supportedTypes": ["text", "product_card", "image", "quick_replies"],
+    "maxLength": 1000,
+    "enableEmoji": true,
+    "enableAttachments": false
+  },
+  "productCard": {
+    "enabled": true,
+    "showImage": true,
+    "showPrice": true,
+    "showDescription": true,
+    "maxDescriptionLength": 100,
+    "actions": {
+      "viewProduct": {
+        "enabled": true,
+        "openInNewTab": false
+      },
+      "addToCart": {
+        "enabled": true,
+        "showQuantitySelector": false
+      }
+    }
+  },
+  "behavior": {
+    "autoOpen": false,
+    "autoOpenDelay": 5000,
+    "showUnreadBadge": true,
+    "playNotificationSound": false,
+    "persistConversation": true,
+    "sessionTimeout": 1800000,
+    "typingIndicatorDelay": 500
+  },
+  "backend": {
+    "note": "n8n webhook endpoint - set window.JANSSEN_WEBHOOK_URL before loading widget",
+    "n8nWebhookPath": "/webhook/janssen-ai-incoming",
+    "n8nDefaultUrl": "http://localhost:5678",
+    "productionUrl": "https://your-n8n-domain.com",
+    "timeout": 15000,
+    "retryAttempts": 2,
+    "retryDelay": 1000,
+    "responseTypes": ["text", "product_card", "handover"],
+    "requestPayload": {
+      "session_id": "string (auto-generated)",
+      "channel": "chat",
+      "language": "ar | en",
+      "user_message": "string",
+      "metadata": {
+        "page": "current URL path",
+        "customer_id": "optional"
+      }
+    }
+  },
+  "shopify": {
+    "note": "PLACEHOLDER - Configure with actual Shopify store",
+    "storeUrl": "PLACEHOLDER_STORE_URL",
+    "enableCartIntegration": true,
+    "enableProductLookup": true,
+    "enableOrderTracking": false
+  },
+  "analytics": {
+    "enabled": false,
+    "trackEvents": [
+      "widget_opened",
+      "widget_closed",
+      "message_sent",
+      "message_received",
+      "product_viewed",
+      "product_added_to_cart",
+      "language_changed"
+    ],
+    "provider": "PLACEHOLDER_ANALYTICS_PROVIDER"
+  },
+  "accessibility": {
+    "enableKeyboardNavigation": true,
+    "enableScreenReaderSupport": true,
+    "highContrastMode": false,
+    "reducedMotion": "auto"
+  },
+  "triggers": {
+    "note": "Conditions to auto-show widget",
+    "rules": [
+      {
+        "id": "time_on_page",
+        "condition": "timeOnPage > 30",
+        "action": "showWidget",
+        "enabled": false
+      },
+      {
+        "id": "exit_intent",
+        "condition": "exitIntent",
+        "action": "showWidget",
+        "enabled": false
+      },
+      {
+        "id": "cart_abandonment",
+        "condition": "cartValue > 0 && inactiveFor > 60",
+        "action": "showWidgetWithMessage",
+        "message": "needHelpWithOrder",
+        "enabled": false
+      }
+    ]
+  },
+  "quickReplies": {
+    "enabled": true,
+    "suggestions": {
+      "ar": [
+        "عايز أعرف الأسعار",
+        "إيه المنتجات المتاحة؟",
+        "معلومات عن التوصيل",
+        "أتكلم مع حد"
+      ],
+      "en": [
+        "I want to know prices",
+        "What products are available?",
+        "Delivery information",
+        "Talk to someone"
+      ]
+    }
+  },
+  "installation": {
+    "note": "Instructions for installing on Shopify with n8n backend",
+    "steps": [
+      "1. Deploy n8n workflow and note the webhook URL",
+      "2. Upload widget.js and styles.css to Shopify theme assets",
+      "3. Add CSS link to theme.liquid before </head>",
+      "4. Add configuration script with your n8n webhook URL",
+      "5. Add widget script tag before </body> in theme.liquid"
+    ],
+    "snippets": {
+      "cssLink": "<link rel=\"stylesheet\" href=\"{{ 'styles.css' | asset_url }}\">",
+      "configScript": "<script>window.JANSSEN_WEBHOOK_URL = 'https://your-n8n-domain.com/webhook/janssen-ai-incoming';</script>",
+      "scriptTag": "<script src=\"{{ 'widget.js' | asset_url }}\" defer></script>"
+    },
+    "fullExample": "<!-- Janssen AI Chatbot -->\n<link rel=\"stylesheet\" href=\"{{ 'styles.css' | asset_url }}\">\n<script>window.JANSSEN_WEBHOOK_URL = 'https://your-n8n.com/webhook/janssen-ai-incoming';</script>\n<script src=\"{{ 'widget.js' | asset_url }}\" defer></script>"
+  }
+}

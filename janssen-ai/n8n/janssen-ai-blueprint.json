@@ -1,0 +1,1238 @@
+{
+  "name": "Janssen_AI_Brain",
+  "version": "1.5.0",
+  "status": "blueprint",
+  "description": "n8n workflow blueprint for Janssen AI customer service system. Processes messages from all channels through intent detection, agent routing, response generation, CRM event synchronization, and analytics/KPI tracking.",
+  "notes": [
+    "This is a BLUEPRINT - not directly executable without configuration",
+    "Replace PLACEHOLDER values with actual endpoints",
+    "Configure credentials before deployment",
+    "Supports Arabic (Egyptian) and English languages",
+    "CRM sync is ASYNC - AI response is never blocked by CRM operations",
+    "Analytics layer is PASSIVE and runs in PARALLEL to CRM",
+    "v1.1.0: Added CRM Event Sync with LEAD_CREATED, COMPLAINT_LOGGED, ESCALATION events",
+    "v1.2.0: Added Analytics & KPI layer with derived metrics and dashboard-ready schema",
+    "v1.2.1: Enhanced analytics documentation with complete SQL schema and dashboard queries",
+    "v1.3.0: Added JanssenCRM integration - AI fields for customercall and tickets tables, channel enforcement",
+    "v1.4.0: Added JanssenCRM MySQL direct integration - auto-insert customercall, tickets, ticket_items",
+    "v1.5.0: Added WhatsApp media support - store images/videos in ticket_media, AI validates presence only"
+  ],
+  "nodes": [
+    {
+      "id": "node_webhook_in",
+      "name": "Webhook_In",
+      "type": "n8n-nodes-base.webhook",
+      "position": [250, 300],
+      "parameters": {
+        "path": "janssen-ai-incoming",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "notes": "Entry point for all incoming messages from chat, voice, and WhatsApp channels."
+    },
+    {
+      "id": "node_normalize_input",
+      "name": "Normalize_Input",
+      "type": "n8n-nodes-base.function",
+      "position": [450, 300],
+      "notes": "Normalizes incoming data: extracts message, detects language, sanitizes input."
+    },
+    {
+      "id": "node_detect_intent",
+      "name": "Detect_Intent",
+      "type": "n8n-nodes-base.function",
+      "position": [650, 300],
+      "notes": "Classifies customer intent using keyword matching or AI model."
+    },
+    {
+      "id": "node_load_agent",
+      "name": "Load_Agent_Config",
+      "type": "n8n-nodes-base.function",
+      "position": [850, 300],
+      "notes": "Loads appropriate agent (sales, support, warranty, complaint, escalation) based on intent."
+    },
+    {
+      "id": "node_check_escalation",
+      "name": "Check_Escalation",
+      "type": "n8n-nodes-base.if",
+      "position": [1050, 300],
+      "notes": "Evaluates if escalation to human is required."
+    },
+    {
+      "id": "node_fetch_knowledge",
+      "name": "Fetch_Knowledge",
+      "type": "n8n-nodes-base.function",
+      "position": [1250, 200],
+      "notes": "Retrieves products, prices, policies from database based on agent requirements."
+    },
+    {
+      "id": "node_apply_rules",
+      "name": "Apply_Business_Rules",
+      "type": "n8n-nodes-base.function",
+      "position": [1450, 200],
+      "notes": "Enforces forbidden actions and business policies before response."
+    },
+    {
+      "id": "node_generate_response",
+      "name": "Generate_Response",
+      "type": "n8n-nodes-base.function",
+      "position": [1650, 200],
+      "notes": "Generates AI response using agent tone, knowledge, and rules. PLACEHOLDER for LLM integration."
+    },
+    {
+      "id": "node_escalate",
+      "name": "Escalate_To_Human",
+      "type": "n8n-nodes-base.function",
+      "position": [1250, 400],
+      "notes": "Routes to human agent queue with conversation context."
+    },
+    {
+      "id": "node_log_interaction",
+      "name": "Log_Interaction",
+      "type": "n8n-nodes-base.function",
+      "position": [1850, 300],
+      "notes": "Logs interaction to database. Forks to PARALLEL paths:\n1. CRM Event Sync (conditional)\n2. Analytics Event Tracking (all events)"
+    },
+
+    {
+      "id": "node_crm_event_router",
+      "name": "CRM_Event_Router",
+      "type": "n8n-nodes-base.switch",
+      "position": [2050, 200],
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "rules": [
+            {
+              "output": 0,
+              "conditions": {
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.agent_used }}",
+                    "rightValue": "sales",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  },
+                  {
+                    "leftValue": "={{ $json.confidence }}",
+                    "rightValue": 0.5,
+                    "operator": {
+                      "type": "number",
+                      "operation": "gte"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "output": 1,
+              "conditions": {
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.agent_used }}",
+                    "rightValue": "complaint",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "output": 2,
+              "conditions": {
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.escalated }}",
+                    "rightValue": true,
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              }
+            }
+          ],
+          "fallbackOutput": 3
+        }
+      },
+      "notes": "CRM EVENT CLASSIFICATION\n\nRoutes interactions to appropriate CRM event handlers:\n- Output 0: LEAD_CREATED (sales agent + confidence >= 0.5)\n- Output 1: COMPLAINT_LOGGED (complaint agent)\n- Output 2: ESCALATION (escalated flag = true)\n- Output 3: NO_CRM_EVENT (fallback - skip CRM sync)\n\nIMPORTANT: This is async classification - AI response is NOT blocked by CRM processing."
+    },
+
+    {
+      "id": "node_set_payload_lead",
+      "name": "Set_Payload_LEAD_CREATED",
+      "type": "n8n-nodes-base.set",
+      "position": [2300, 0],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "event_type",
+              "name": "crm_payload.event_type",
+              "value": "LEAD_CREATED",
+              "type": "string"
+            },
+            {
+              "id": "session_id",
+              "name": "crm_payload.session_id",
+              "value": "={{ $json.session_id }}",
+              "type": "string"
+            },
+            {
+              "id": "phone",
+              "name": "crm_payload.phone",
+              "value": "={{ $json.phone || $json.user_phone || null }}",
+              "type": "string"
+            },
+            {
+              "id": "channel",
+              "name": "crm_payload.channel",
+              "value": "={{ $json.channel || 'chat' }}",
+              "type": "string"
+            },
+            {
+              "id": "language",
+              "name": "crm_payload.language",
+              "value": "={{ $json.language || $json.detected_language || 'ar' }}",
+              "type": "string"
+            },
+            {
+              "id": "intent",
+              "name": "crm_payload.intent",
+              "value": "={{ $json.intent || $json.detected_intent }}",
+              "type": "string"
+            },
+            {
+              "id": "confidence",
+              "name": "crm_payload.confidence",
+              "value": "={{ $json.confidence }}",
+              "type": "number"
+            },
+            {
+              "id": "timestamp",
+              "name": "crm_payload.timestamp",
+              "value": "={{ new Date().toISOString() }}",
+              "type": "string"
+            },
+            {
+              "id": "ai_intent",
+              "name": "crm_payload.janssencrm.ai_intent",
+              "value": "={{ $json.intent || $json.detected_intent }}",
+              "type": "string"
+            },
+            {
+              "id": "ai_confidence",
+              "name": "crm_payload.janssencrm.ai_confidence",
+              "value": "={{ $json.confidence }}",
+              "type": "number"
+            },
+            {
+              "id": "ai_agent",
+              "name": "crm_payload.janssencrm.ai_agent",
+              "value": "={{ $json.agent_used }}",
+              "type": "string"
+            },
+            {
+              "id": "ai_session_id",
+              "name": "crm_payload.janssencrm.ai_session_id",
+              "value": "={{ $json.session_id }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {
+          "keepOnlySet": false
+        }
+      },
+      "notes": "LEAD_CREATED Payload Normalization\n\nPrepares standardized payload for CRM when a potential sales lead is detected.\nTriggered when: agent_used == 'sales' AND confidence >= 0.5\n\n=== JANSSENCRM MAPPING (customercall table) ===\n• ai_intent → customercall.ai_intent\n• ai_confidence → customercall.ai_confidence\n• ai_agent → customercall.ai_agent\n• channel → customercall.channel (chat|voice|whatsapp)\n• ai_session_id → customercall.ai_session_id"
+    },
+
+    {
+      "id": "node_set_payload_complaint",
+      "name": "Set_Payload_COMPLAINT_LOGGED",
+      "type": "n8n-nodes-base.set",
+      "position": [2300, 150],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "event_type",
+              "name": "crm_payload.event_type",
+              "value": "COMPLAINT_LOGGED",
+              "type": "string"
+            },
+            {
+              "id": "session_id",
+              "name": "crm_payload.session_id",
+              "value": "={{ $json.session_id }}",
+              "type": "string"
+            },
+            {
+              "id": "phone",
+              "name": "crm_payload.phone",
+              "value": "={{ $json.phone || $json.user_phone || null }}",
+              "type": "string"
+            },
+            {
+              "id": "category",
+              "name": "crm_payload.category",
+              "value": "={{ $json.complaint_category || $json.category || 'general' }}",
+              "type": "string"
+            },
+            {
+              "id": "sentiment",
+              "name": "crm_payload.sentiment",
+              "value": "={{ $json.sentiment || $json.detected_sentiment || 'negative' }}",
+              "type": "string"
+            },
+            {
+              "id": "channel",
+              "name": "crm_payload.channel",
+              "value": "={{ $json.channel || 'chat' }}",
+              "type": "string"
+            },
+            {
+              "id": "timestamp",
+              "name": "crm_payload.timestamp",
+              "value": "={{ new Date().toISOString() }}",
+              "type": "string"
+            },
+            {
+              "id": "ai_intent",
+              "name": "crm_payload.janssencrm.ai_intent",
+              "value": "={{ $json.intent || $json.detected_intent || 'complaint' }}",
+              "type": "string"
+            },
+            {
+              "id": "ai_confidence",
+              "name": "crm_payload.janssencrm.ai_confidence",
+              "value": "={{ $json.confidence }}",
+              "type": "number"
+            },
+            {
+              "id": "ai_agent",
+              "name": "crm_payload.janssencrm.ai_agent",
+              "value": "={{ $json.agent_used }}",
+              "type": "string"
+            },
+            {
+              "id": "ai_session_id",
+              "name": "crm_payload.janssencrm.ai_session_id",
+              "value": "={{ $json.session_id }}",
+              "type": "string"
+            },
+            {
+              "id": "media",
+              "name": "crm_payload.media",
+              "value": "={{ $json.media || $json.whatsapp_media || $json.attachments || [] }}",
+              "type": "string"
+            },
+            {
+              "id": "has_media",
+              "name": "crm_payload.has_media",
+              "value": "={{ ($json.media || $json.whatsapp_media || $json.attachments || []).length > 0 }}",
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {
+          "keepOnlySet": false
+        }
+      },
+      "notes": "COMPLAINT_LOGGED Payload Normalization\n\nPrepares standardized payload for CRM when a customer complaint is detected.\nTriggered when: agent_used == 'complaint'\n\n=== JANSSENCRM MAPPING (customercall table) ===\n• ai_intent → customercall.ai_intent\n• ai_confidence → customercall.ai_confidence\n• ai_agent → customercall.ai_agent\n• channel → customercall.channel (chat|voice|whatsapp)\n• ai_session_id → customercall.ai_session_id\n\n=== WHATSAPP MEDIA ===\n• media → crm_payload.media (array of media objects)\n• has_media → boolean flag\n\nMedia expected from:\n• $json.media (primary)\n• $json.whatsapp_media (WhatsApp specific)\n• $json.attachments (generic)\n\n=== AI MEDIA VALIDATION ===\nAI validates PRESENCE only:\n✓ Media exists (Yes/No)\n✓ Media type (image/video)\n✓ File count\n\nAI does NOT validate:\n✗ Image quality\n✗ Content relevance\n✗ Clarity/focus"
+    },
+
+    {
+      "id": "node_set_payload_escalation",
+      "name": "Set_Payload_ESCALATION",
+      "type": "n8n-nodes-base.set",
+      "position": [2300, 300],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "event_type",
+              "name": "crm_payload.event_type",
+              "value": "ESCALATION",
+              "type": "string"
+            },
+            {
+              "id": "session_id",
+              "name": "crm_payload.session_id",
+              "value": "={{ $json.session_id }}",
+              "type": "string"
+            },
+            {
+              "id": "queue",
+              "name": "crm_payload.queue",
+              "value": "={{ $json.escalation_queue || $json.queue || 'default' }}",
+              "type": "string"
+            },
+            {
+              "id": "escalation_reason",
+              "name": "crm_payload.escalation_reason",
+              "value": "={{ $json.escalation_reason || $json.reason || 'customer_request' }}",
+              "type": "string"
+            },
+            {
+              "id": "channel",
+              "name": "crm_payload.channel",
+              "value": "={{ $json.channel || 'chat' }}",
+              "type": "string"
+            },
+            {
+              "id": "timestamp",
+              "name": "crm_payload.timestamp",
+              "value": "={{ new Date().toISOString() }}",
+              "type": "string"
+            },
+            {
+              "id": "escalated_by_ai",
+              "name": "crm_payload.janssencrm.escalated_by_ai",
+              "value": true,
+              "type": "boolean"
+            },
+            {
+              "id": "janssencrm_escalation_reason",
+              "name": "crm_payload.janssencrm.escalation_reason",
+              "value": "={{ $json.escalation_reason || $json.reason || 'customer_request' }}",
+              "type": "string"
+            },
+            {
+              "id": "ai_agent",
+              "name": "crm_payload.janssencrm.ai_agent",
+              "value": "={{ $json.agent_used }}",
+              "type": "string"
+            },
+            {
+              "id": "ai_session_id",
+              "name": "crm_payload.janssencrm.ai_session_id",
+              "value": "={{ $json.session_id }}",
+              "type": "string"
+            },
+            {
+              "id": "ai_urgency_score",
+              "name": "crm_payload.janssencrm.ai_urgency_score",
+              "value": "={{ $json.urgency_score || 50 }}",
+              "type": "number"
+            },
+            {
+              "id": "ai_intent",
+              "name": "crm_payload.janssencrm.ai_intent",
+              "value": "={{ $json.intent || $json.detected_intent }}",
+              "type": "string"
+            },
+            {
+              "id": "ai_confidence",
+              "name": "crm_payload.janssencrm.ai_confidence",
+              "value": "={{ $json.confidence }}",
+              "type": "number"
+            },
+            {
+              "id": "media",
+              "name": "crm_payload.media",
+              "value": "={{ $json.media || $json.whatsapp_media || $json.attachments || [] }}",
+              "type": "string"
+            },
+            {
+              "id": "has_media",
+              "name": "crm_payload.has_media",
+              "value": "={{ ($json.media || $json.whatsapp_media || $json.attachments || []).length > 0 }}",
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {
+          "keepOnlySet": false
+        }
+      },
+      "notes": "ESCALATION Payload Normalization\n\nPrepares standardized payload for CRM when conversation is escalated to human.\nTriggered when: escalated == true\n\n=== JANSSENCRM MAPPING (tickets table) ===\n• escalated_by_ai → tickets.escalated_by_ai (always true for AI escalations)\n• escalation_reason → tickets.escalation_reason\n• ai_agent → tickets.ai_agent\n• channel → tickets.channel (chat|voice|whatsapp)\n• ai_session_id → tickets.ai_session_id\n• ai_urgency_score → tickets.ai_urgency_score\n\n=== WHATSAPP MEDIA ===\n• media → crm_payload.media (array of media objects)\n• has_media → boolean flag\n\n=== AI MEDIA VALIDATION ===\nAI validates PRESENCE only - never judges quality."
+    },
+
+    {
+      "id": "node_crm_merge",
+      "name": "CRM_Payload_Merge",
+      "type": "n8n-nodes-base.merge",
+      "position": [2550, 150],
+      "parameters": {
+        "mode": "multiplex"
+      },
+      "notes": "Merges all CRM event payload branches into a single flow for the HTTP request.\nOnly one branch will be active per execution."
+    },
+
+    {
+      "id": "node_janssencrm_build_sql",
+      "name": "JanssenCRM_Build_SQL",
+      "type": "n8n-nodes-base.function",
+      "position": [2750, 150],
+      "parameters": {
+        "functionCode": "// ============================================================\n// JANSSENCRM SQL BUILDER\n// ============================================================\n// Purpose: Build MySQL-compatible SQL payloads for JanssenCRM\n// Tables: customercall, tickets, ticket_items, ticket_media\n// ============================================================\n\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const payload = item.json.crm_payload;\n  const jcrm = payload.janssencrm || {};\n  const eventType = payload.event_type;\n  \n  // Helper: Escape SQL string values\n  function escapeSQL(val) {\n    if (val === null || val === undefined) return 'NULL';\n    if (typeof val === 'boolean') return val ? '1' : '0';\n    if (typeof val === 'number') return val.toString();\n    return \"'\" + String(val).replace(/'/g, \"''\").replace(/\\\\/g, '\\\\\\\\') + \"'\";\n  }\n  \n  // Helper: Format datetime for MySQL\n  function formatDateTime(isoString) {\n    if (!isoString) return 'NOW()';\n    return escapeSQL(isoString.replace('T', ' ').replace('Z', '').substring(0, 19));\n  }\n  \n  // ========================================\n  // EXTRACT WHATSAPP MEDIA (if present)\n  // AI validates PRESENCE only, never judges quality\n  // ========================================\n  const mediaData = payload.media || item.json.whatsapp_media || [];\n  const mediaArray = Array.isArray(mediaData) ? mediaData : (mediaData ? [mediaData] : []);\n  const hasMedia = mediaArray.length > 0;\n  const primaryMedia = mediaArray[0] || null;\n  \n  // AI Media Validation: Check PRESENCE only\n  // - Does media exist? (Yes/No)\n  // - What type? (image/video/document)\n  // - Is URL accessible? (valid URL format)\n  // AI does NOT judge: quality, clarity, relevance, or content\n  const mediaValidation = {\n    has_media: hasMedia,\n    media_count: mediaArray.length,\n    media_types: [...new Set(mediaArray.map(m => m.type || m.media_type || 'unknown'))],\n    ai_validation_note: hasMedia ? `${mediaArray.length} media file(s) received` : 'No media attached'\n  };\n  \n  // ========================================\n  // BUILD CUSTOMERCALL INSERT\n  // ========================================\n  const customerCallSQL = `INSERT INTO customercall (\n    company_id,\n    customer_id,\n    call_type,\n    category_id,\n    description,\n    call_notes,\n    channel,\n    ai_intent,\n    ai_confidence,\n    ai_agent,\n    ai_session_id,\n    ai_processed_at,\n    created_by\n  ) VALUES (\n    ${escapeSQL(payload.company_id || 1)},\n    ${escapeSQL(payload.customer_id || null)},\n    ${escapeSQL(eventType === 'LEAD_CREATED' ? 1 : eventType === 'COMPLAINT_LOGGED' ? 2 : 3)},\n    ${escapeSQL(payload.category_id || 1)},\n    ${escapeSQL(payload.description || 'AI Interaction: ' + (jcrm.ai_intent || 'general'))},\n    ${escapeSQL('Session: ' + (payload.session_id || 'unknown') + ' | Channel: ' + (payload.channel || 'chat') + (hasMedia ? ' | Media: ' + mediaArray.length + ' file(s)' : ''))},\n    ${escapeSQL(payload.channel || 'chat')},\n    ${escapeSQL(jcrm.ai_intent || payload.intent)},\n    ${escapeSQL(jcrm.ai_confidence || payload.confidence)},\n    ${escapeSQL(jcrm.ai_agent)},\n    ${escapeSQL(jcrm.ai_session_id || payload.session_id)},\n    ${formatDateTime(payload.timestamp)},\n    ${escapeSQL(payload.created_by || 1)}\n  )`;\n  \n  // ========================================\n  // BUILD TICKET INSERT (for complaints/escalations)\n  // ========================================\n  let ticketSQL = null;\n  if (eventType === 'COMPLAINT_LOGGED' || eventType === 'ESCALATION') {\n    ticketSQL = `INSERT INTO tickets (\n      company_id,\n      customer_id,\n      category_id,\n      reason_id,\n      status,\n      priority,\n      description,\n      notes,\n      channel,\n      escalated_by_ai,\n      escalation_reason,\n      ai_session_id,\n      ai_urgency_score,\n      ai_agent,\n      created_by\n    ) VALUES (\n      ${escapeSQL(payload.company_id || 1)},\n      ${escapeSQL(payload.customer_id || null)},\n      ${escapeSQL(eventType === 'COMPLAINT_LOGGED' ? 1 : 2)},\n      ${escapeSQL(payload.reason_id || 1)},\n      ${escapeSQL(1)},\n      ${escapeSQL(jcrm.ai_urgency_score >= 50 ? 2 : 1)},\n      ${escapeSQL(payload.description || 'AI Generated Ticket: ' + (jcrm.escalation_reason || payload.category || 'general'))},\n      ${escapeSQL('Auto-created by AI | Session: ' + (payload.session_id || 'unknown') + (hasMedia ? ' | ' + mediaValidation.ai_validation_note : ''))},\n      ${escapeSQL(payload.channel || 'chat')},\n      ${escapeSQL(eventType === 'ESCALATION' ? 1 : 0)},\n      ${escapeSQL(jcrm.escalation_reason || null)},\n      ${escapeSQL(jcrm.ai_session_id || payload.session_id)},\n      ${escapeSQL(jcrm.ai_urgency_score || 0)},\n      ${escapeSQL(jcrm.ai_agent)},\n      ${escapeSQL(payload.created_by || 1)}\n    )`;\n  }\n  \n  // ========================================\n  // BUILD TICKET_ITEMS INSERT (with media support)\n  // ========================================\n  let ticketItemSQL = null;\n  const productData = payload.product || item.json.extracted_product || null;\n  if (productData && (eventType === 'COMPLAINT_LOGGED' || eventType === 'ESCALATION')) {\n    ticketItemSQL = `INSERT INTO ticket_items (\n      company_id,\n      ticket_id,\n      product_id,\n      product_size,\n      quantity,\n      purchase_date,\n      purchase_location,\n      request_reason_id,\n      request_reason_detail,\n      media_url,\n      media_type,\n      media_validated,\n      media_count,\n      whatsapp_media_id,\n      created_by\n    ) VALUES (\n      ${escapeSQL(payload.company_id || 1)},\n      LAST_INSERT_ID(),\n      ${escapeSQL(productData.product_id || null)},\n      ${escapeSQL(productData.size || productData.product_size || null)},\n      ${escapeSQL(productData.quantity || 1)},\n      ${productData.purchase_date ? formatDateTime(productData.purchase_date) : 'NULL'},\n      ${escapeSQL(productData.purchase_location || null)},\n      ${escapeSQL(payload.reason_id || 1)},\n      ${escapeSQL(productData.issue_detail || payload.description || null)},\n      ${escapeSQL(primaryMedia?.url || primaryMedia?.media_url || null)},\n      ${escapeSQL(primaryMedia?.type || primaryMedia?.media_type || null)},\n      ${escapeSQL(hasMedia ? 1 : 0)},\n      ${escapeSQL(mediaArray.length)},\n      ${escapeSQL(primaryMedia?.whatsapp_media_id || primaryMedia?.id || null)},\n      ${escapeSQL(payload.created_by || 1)}\n    )`;\n  }\n  \n  // ========================================\n  // BUILD TICKET_MEDIA INSERTS (multiple media files)\n  // ========================================\n  const ticketMediaSQLs = [];\n  if (hasMedia && (eventType === 'COMPLAINT_LOGGED' || eventType === 'ESCALATION')) {\n    for (const media of mediaArray) {\n      const mediaSQL = `INSERT INTO ticket_media (\n        company_id,\n        ticket_id,\n        media_url,\n        media_type,\n        mime_type,\n        whatsapp_media_id,\n        whatsapp_message_id,\n        file_size,\n        file_name,\n        ai_validated,\n        ai_validation_note,\n        uploaded_at\n      ) VALUES (\n        ${escapeSQL(payload.company_id || 1)},\n        LAST_INSERT_ID(),\n        ${escapeSQL(media.url || media.media_url)},\n        ${escapeSQL(media.type || media.media_type || 'image')},\n        ${escapeSQL(media.mime_type || null)},\n        ${escapeSQL(media.whatsapp_media_id || media.id || null)},\n        ${escapeSQL(media.message_id || null)},\n        ${escapeSQL(media.file_size || media.size || null)},\n        ${escapeSQL(media.file_name || media.filename || null)},\n        ${escapeSQL(1)},\n        ${escapeSQL('Media received via ' + (payload.channel || 'whatsapp'))},\n        ${formatDateTime(media.timestamp || payload.timestamp)}\n      )`;\n      ticketMediaSQLs.push(mediaSQL);\n    }\n  }\n  \n  results.push({\n    json: {\n      ...item.json,\n      _janssencrm_sql: {\n        customercall: customerCallSQL,\n        ticket: ticketSQL,\n        ticket_item: ticketItemSQL,\n        ticket_media: ticketMediaSQLs,\n        event_type: eventType,\n        has_ticket: ticketSQL !== null,\n        has_ticket_item: ticketItemSQL !== null,\n        has_media: hasMedia,\n        media_count: mediaArray.length\n      },\n      _media_validation: mediaValidation\n    }\n  });\n}\n\nreturn results;"
+      },
+      "notes": "🗄️ JANSSENCRM SQL BUILDER\n\n=== PURPOSE ===\nBuilds MySQL-compatible SQL INSERT statements for JanssenCRM tables.\n\n=== TABLES TARGETED ===\n• customercall: All AI interactions (leads, complaints, escalations)\n• tickets: Auto-created for COMPLAINT_LOGGED and ESCALATION events\n• ticket_items: Linked when product data is extracted (with media support)\n• ticket_media: Stores WhatsApp images/videos linked to tickets\n\n=== WHATSAPP MEDIA HANDLING ===\nMedia data expected in:\n• crm_payload.media (array), or\n• whatsapp_media (array)\n\nMedia object format:\n{\n  url: string,           // Media URL\n  type: 'image'|'video'|'document',\n  mime_type: string,     // e.g., 'image/jpeg'\n  whatsapp_media_id: string,\n  file_size: number,\n  file_name: string\n}\n\n=== AI MEDIA VALIDATION ===\n⚠️ AI validates PRESENCE only, NEVER judges quality:\n✓ Does media exist? (Yes/No)\n✓ What type? (image/video/document)\n✓ How many files?\n✗ Is image clear? (NOT validated)\n✗ Is content relevant? (NOT validated)\n✗ Is quality good? (NOT validated)\n\n=== OUTPUT ===\n_janssencrm_sql: {\n  customercall: INSERT SQL,\n  ticket: INSERT SQL or null,\n  ticket_item: INSERT SQL or null,\n  ticket_media: [INSERT SQL array],\n  has_media: boolean,\n  media_count: number\n}\n_media_validation: {\n  has_media: boolean,\n  media_count: number,\n  media_types: string[],\n  ai_validation_note: string\n}"
+    },
+
+    {
+      "id": "node_janssencrm_insert_customercall",
+      "name": "JanssenCRM_Insert_CustomerCall",
+      "type": "n8n-nodes-base.mysql",
+      "position": [2950, 150],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json._janssencrm_sql.customercall }}"
+      },
+      "credentials": {
+        "mysql": {
+          "id": "__MYSQL_CREDENTIAL_ID__",
+          "name": "__JANSSENCRM_MYSQL__"
+        }
+      },
+      "continueOnFail": true,
+      "notes": "🗄️ INSERT INTO customercall\n\n=== PURPOSE ===\nInserts AI interaction record into JanssenCRM customercall table.\n\n=== FIELDS POPULATED ===\n• company_id, customer_id\n• call_type (1=Lead, 2=Complaint, 3=Escalation)\n• description, call_notes\n• channel (chat|voice|whatsapp)\n• ai_intent, ai_confidence, ai_agent\n• ai_session_id, ai_processed_at\n\n=== NON-BLOCKING ===\ncontinueOnFail=true ensures chatbot response is never delayed.\n\n=== CONFIGURATION ===\n1. Create MySQL credential in n8n Settings\n2. Replace '__MYSQL_CREDENTIAL_ID__' with credential ID\n3. Ensure janssencrm_schema_extension.sql has been applied"
+    },
+
+    {
+      "id": "node_janssencrm_check_ticket",
+      "name": "JanssenCRM_Check_Ticket_Needed",
+      "type": "n8n-nodes-base.if",
+      "position": [3150, 150],
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json._janssencrm_sql.has_ticket }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "notes": "🎫 CHECK: Should we create a ticket?\n\nRoutes to ticket creation if:\n• event_type = COMPLAINT_LOGGED, or\n• event_type = ESCALATION\n\nOutput 0 (true): Create ticket\nOutput 1 (false): Skip ticket creation"
+    },
+
+    {
+      "id": "node_janssencrm_insert_ticket",
+      "name": "JanssenCRM_Insert_Ticket",
+      "type": "n8n-nodes-base.mysql",
+      "position": [3350, 50],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json._janssencrm_sql.ticket }}"
+      },
+      "credentials": {
+        "mysql": {
+          "id": "__MYSQL_CREDENTIAL_ID__",
+          "name": "__JANSSENCRM_MYSQL__"
+        }
+      },
+      "continueOnFail": true,
+      "notes": "🎫 INSERT INTO tickets\n\n=== PURPOSE ===\nAuto-creates support ticket for complaints and escalations.\n\n=== FIELDS POPULATED ===\n• company_id, customer_id, category_id, reason_id\n• status (1=Open), priority (based on urgency_score)\n• description, notes\n• channel, escalated_by_ai, escalation_reason\n• ai_session_id, ai_urgency_score, ai_agent\n\n=== TRIGGERS ===\n• COMPLAINT_LOGGED: Creates complaint ticket\n• ESCALATION: Creates escalation ticket with escalated_by_ai=1\n\n=== NON-BLOCKING ===\ncontinueOnFail=true ensures chatbot response is never delayed."
+    },
+
+    {
+      "id": "node_janssencrm_check_ticket_item",
+      "name": "JanssenCRM_Check_TicketItem_Needed",
+      "type": "n8n-nodes-base.if",
+      "position": [3550, 50],
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json._janssencrm_sql.has_ticket_item }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "notes": "📦 CHECK: Should we link a product?\n\nRoutes to ticket_item creation if:\n• Product data was extracted from conversation\n• A ticket was created (COMPLAINT_LOGGED or ESCALATION)\n\nOutput 0 (true): Create ticket_item\nOutput 1 (false): Skip ticket_item creation"
+    },
+
+    {
+      "id": "node_janssencrm_insert_ticket_item",
+      "name": "JanssenCRM_Insert_TicketItem",
+      "type": "n8n-nodes-base.mysql",
+      "position": [3750, 0],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json._janssencrm_sql.ticket_item }}"
+      },
+      "credentials": {
+        "mysql": {
+          "id": "__MYSQL_CREDENTIAL_ID__",
+          "name": "__JANSSENCRM_MYSQL__"
+        }
+      },
+      "continueOnFail": true,
+      "notes": "📦 INSERT INTO ticket_items\n\n=== PURPOSE ===\nLinks extracted product data to the ticket.\n\n=== FIELDS POPULATED ===\n• company_id, ticket_id (uses LAST_INSERT_ID())\n• product_id, product_size, quantity\n• purchase_date, purchase_location\n• request_reason_id, request_reason_detail\n\n=== PRODUCT DATA SOURCE ===\nExpects product data in:\n• crm_payload.product, or\n• extracted_product field\n\nFormat: {\n  product_id: number,\n  size: string,\n  quantity: number,\n  purchase_date: ISO8601,\n  purchase_location: string,\n  issue_detail: string\n}\n\n=== NON-BLOCKING ===\ncontinueOnFail=true ensures chatbot response is never delayed."
+    },
+
+    {
+      "id": "node_janssencrm_check_media",
+      "name": "JanssenCRM_Check_Media_Needed",
+      "type": "n8n-nodes-base.if",
+      "position": [3950, 0],
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json._janssencrm_sql.has_media }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "notes": "📷 CHECK: Should we store WhatsApp media?\n\nRoutes to media storage if:\n• Media files were received (images/videos)\n• Event is COMPLAINT_LOGGED or ESCALATION\n\nOutput 0 (true): Store media files\nOutput 1 (false): Skip media storage\n\n=== AI VALIDATION NOTE ===\nAI only validates PRESENCE of media.\nAI does NOT judge quality, clarity, or relevance."
+    },
+
+    {
+      "id": "node_janssencrm_insert_media",
+      "name": "JanssenCRM_Insert_Media",
+      "type": "n8n-nodes-base.function",
+      "position": [4150, -50],
+      "parameters": {
+        "functionCode": "// ============================================================\n// JANSSENCRM MEDIA INSERTER\n// ============================================================\n// Purpose: Execute multiple INSERT statements for ticket_media\n// Note: Uses SplitInBatches pattern for multiple media files\n// ============================================================\n\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const mediaSQLs = item.json._janssencrm_sql?.ticket_media || [];\n  const mediaValidation = item.json._media_validation || {};\n  \n  // Combine all media INSERT statements into a single batch\n  // Using transaction for atomicity\n  let batchSQL = '';\n  if (mediaSQLs.length > 0) {\n    batchSQL = 'START TRANSACTION;\\n';\n    batchSQL += mediaSQLs.join(';\\n') + ';\\n';\n    batchSQL += 'COMMIT;';\n  }\n  \n  results.push({\n    json: {\n      ...item.json,\n      _janssencrm_sql: {\n        ...item.json._janssencrm_sql,\n        media_batch: batchSQL,\n        media_insert_count: mediaSQLs.length\n      },\n      _media_storage_status: {\n        files_to_store: mediaSQLs.length,\n        validation: mediaValidation,\n        ai_note: 'AI validated media PRESENCE only. Quality not assessed.'\n      }\n    }\n  });\n}\n\nreturn results;"
+      },
+      "notes": "📷 PREPARE MEDIA INSERT BATCH\n\n=== PURPOSE ===\nPrepares batch INSERT for multiple media files.\nWraps in transaction for atomicity.\n\n=== AI VALIDATION REMINDER ===\nAI validates PRESENCE only:\n✓ Media file exists\n✓ Media type identified\n✓ URL is valid format\n\nAI does NOT validate:\n✗ Image quality/clarity\n✗ Content relevance\n✗ File corruption\n✗ Appropriate content\n\nQuality assessment is left to human agents."
+    },
+
+    {
+      "id": "node_janssencrm_execute_media",
+      "name": "JanssenCRM_Execute_Media_Insert",
+      "type": "n8n-nodes-base.mysql",
+      "position": [4350, -50],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json._janssencrm_sql.media_batch }}"
+      },
+      "credentials": {
+        "mysql": {
+          "id": "__MYSQL_CREDENTIAL_ID__",
+          "name": "__JANSSENCRM_MYSQL__"
+        }
+      },
+      "continueOnFail": true,
+      "notes": "📷 INSERT INTO ticket_media\n\n=== PURPOSE ===\nStores WhatsApp media files (images/videos) linked to tickets.\n\n=== FIELDS POPULATED ===\n• company_id, ticket_id\n• media_url, media_type, mime_type\n• whatsapp_media_id, whatsapp_message_id\n• file_size, file_name\n• ai_validated, ai_validation_note\n• uploaded_at\n\n=== MEDIA TYPES SUPPORTED ===\n• image (jpeg, png, webp)\n• video (mp4, 3gp)\n• document (pdf, doc)\n• audio (ogg, mp3)\n\n=== NON-BLOCKING ===\ncontinueOnFail=true ensures chatbot response is never delayed."
+    },
+
+    {
+      "id": "node_janssencrm_merge",
+      "name": "JanssenCRM_Merge",
+      "type": "n8n-nodes-base.merge",
+      "position": [4550, 150],
+      "parameters": {
+        "mode": "multiplex"
+      },
+      "notes": "Merges all JanssenCRM operation paths back together."
+    },
+
+    {
+      "id": "node_crm_error_handler",
+      "name": "CRM_Error_Handler",
+      "type": "n8n-nodes-base.function",
+      "position": [4750, 150],
+      "parameters": {
+        "functionCode": "// CRM Error Handler\n// Logs JanssenCRM sync errors without breaking the main flow\n\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const sqlData = item.json?._janssencrm_sql || {};\n  const mediaValidation = item.json?._media_validation || {};\n  \n  const crm_sync_status = {\n    success: true,\n    error: null,\n    timestamp: new Date().toISOString(),\n    janssencrm: {\n      customercall_inserted: !item.error,\n      ticket_created: sqlData.has_ticket || false,\n      ticket_item_linked: sqlData.has_ticket_item || false,\n      media_stored: sqlData.has_media || false,\n      media_count: sqlData.media_count || 0\n    },\n    media_validation: {\n      has_media: mediaValidation.has_media || false,\n      media_count: mediaValidation.media_count || 0,\n      media_types: mediaValidation.media_types || [],\n      ai_note: mediaValidation.ai_validation_note || 'No media',\n      quality_assessed: false  // AI NEVER judges quality\n    }\n  };\n\n  if (item.error) {\n    crm_sync_status.success = false;\n    crm_sync_status.error = {\n      message: item.error.message || 'Unknown CRM sync error',\n      code: item.error.code || 'CRM_SYNC_FAILED',\n      details: item.error.description || null\n    };\n    console.error(`[JANSSENCRM_ERROR] Event: ${item.json?.crm_payload?.event_type || 'UNKNOWN'}`, {\n      session_id: item.json?.session_id,\n      error: crm_sync_status.error,\n      media: crm_sync_status.media_validation\n    });\n  }\n\n  results.push({\n    json: {\n      ...item.json,\n      _crm_sync_status: crm_sync_status\n    }\n  });\n}\n\nreturn results;"
+      },
+      "notes": "🛡️ CRM Error Handler\n\n=== PURPOSE ===\nGracefully handles JanssenCRM MySQL errors without breaking chatbot flow.\n\n=== OUTPUT ===\n_crm_sync_status: {\n  success: boolean,\n  error: { message, code, details } | null,\n  timestamp: ISO8601,\n  janssencrm: {\n    customercall_inserted: boolean,\n    ticket_created: boolean,\n    ticket_item_linked: boolean,\n    media_stored: boolean,\n    media_count: number\n  },\n  media_validation: {\n    has_media: boolean,\n    media_count: number,\n    media_types: string[],\n    ai_note: string,\n    quality_assessed: false  // ALWAYS false - AI never judges quality\n  }\n}\n\n=== AI MEDIA VALIDATION ===\n⚠️ AI validates PRESENCE only:\n✓ Media exists\n✓ Media type identified\n✓ File count\n\nAI does NOT validate:\n✗ Image quality\n✗ Content relevance\n✗ Clarity/focus\n\n=== ERROR RECOVERY ===\n1. Check n8n Execution History for failed operations\n2. Query _crm_sync_status in response for debugging\n3. Retry failed events manually or via scheduled workflow"
+    },
+
+    {
+      "id": "node_crm_noop",
+      "name": "CRM_NoOp_Skip",
+      "type": "n8n-nodes-base.noOp",
+      "position": [2550, 400],
+      "notes": "NO_CRM_EVENT - Skip CRM Sync\n\nThis path is taken when no CRM event should be created."
+    },
+
+    {
+      "id": "node_analytics_event_mirror",
+      "name": "Analytics_Event_Mirror",
+      "type": "n8n-nodes-base.function",
+      "position": [2050, 600],
+      "parameters": {
+        "functionCode": "// ============================================================\n// ANALYTICS EVENT MIRROR\n// ============================================================\n// Purpose: Clone interaction data for analytics processing\n// Design: PASSIVE, NON-BLOCKING, CRM-INDEPENDENT\n// Output: Unified analytics event schema\n// ============================================================\n\nconst items = $input.all();\nconst analyticsEvents = [];\n\nfor (const item of items) {\n  const data = item.json;\n  \n  // Generate unique event ID for deduplication\n  const eventId = `evt_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;\n  \n  // Clone the event for analytics (immutable copy)\n  const analyticsEvent = {\n    // ========================================\n    // CORE IDENTIFIERS\n    // ========================================\n    event_id: eventId,\n    session_id: data.session_id,\n    \n    // ========================================\n    // INTERACTION METADATA\n    // ========================================\n    agent_used: data.agent_used || 'unknown',\n    channel: data.channel || 'unknown',\n    language: data.language || data.detected_language || 'ar',\n    \n    // ========================================\n    // AI METRICS (for confidence tracking)\n    // ========================================\n    confidence: data.confidence || 0,\n    intent: data.intent || data.detected_intent || 'unknown',\n    \n    // ========================================\n    // STATUS FLAGS (for KPI calculation)\n    // ========================================\n    escalated: data.escalated === true,\n    event_type: determineCrmEventType(data),\n    \n    // ========================================\n    // TIMING (for time-series analysis)\n    // ========================================\n    timestamp: new Date().toISOString(),\n    processing_start: data._processing_start || null,\n    \n    // ========================================\n    // RAW SNAPSHOT (for drill-down analysis)\n    // ========================================\n    _raw_snapshot: {\n      sentiment: data.sentiment || null,\n      category: data.complaint_category || data.category || null,\n      escalation_reason: data.escalation_reason || null,\n      queue: data.escalation_queue || data.queue || null\n    }\n  };\n  \n  analyticsEvents.push({ json: analyticsEvent });\n}\n\n// Helper: Determine CRM event type for analytics classification\nfunction determineCrmEventType(data) {\n  if (data.agent_used === 'sales' && (data.confidence || 0) >= 0.5) return 'LEAD_CREATED';\n  if (data.agent_used === 'complaint') return 'COMPLAINT_LOGGED';\n  if (data.escalated === true) return 'ESCALATION';\n  return 'NO_CRM_EVENT';\n}\n\nreturn analyticsEvents;"
+      },
+      "notes": "📊 ANALYTICS EVENT MIRROR\n\n=== PURPOSE ===\nClones ALL interaction data for analytics processing.\nThis is the ONLY source for analytics_events table.\n\n=== DESIGN PRINCIPLES ===\n✓ PASSIVE: Read-only, never modifies chatbot behavior\n✓ NON-BLOCKING: continueOnFail downstream ensures response\n✓ CRM-INDEPENDENT: Runs in PARALLEL to CRM path\n✓ COMPLETE: Captures ALL events, not just CRM-worthy ones\n\n=== WHY MIRROR INSTEAD OF BRANCH? ===\n1. Analytics must NEVER depend on CRM success/failure\n2. Immutable copy ensures analytics doesn't affect main flow\n3. Enables retroactive analysis and A/B testing\n4. Clean separation of concerns\n\n=== OUTPUT SCHEMA ===\n{\n  event_id: string,      // Unique ID for deduplication\n  session_id: string,    // Conversation session\n  agent_used: string,    // sales|support|warranty|complaint|escalation\n  channel: string,       // chat|voice|whatsapp\n  language: string,      // ar|en\n  confidence: number,    // 0-1 AI confidence\n  intent: string,        // Detected intent\n  escalated: boolean,    // Human escalation flag\n  event_type: string,    // LEAD_CREATED|COMPLAINT_LOGGED|ESCALATION|NO_CRM_EVENT\n  timestamp: ISO8601,    // Event timestamp\n  _raw_snapshot: object  // Additional fields for drill-down\n}\n\n=== KPIs ENABLED ===\n• Lead generation rate\n• Complaint volume\n• Escalation rate\n• AI confidence by channel\n• Agent workload distribution"
+    },
+
+    {
+      "id": "node_normalize_kpi_event",
+      "name": "Normalize_KPI_Event",
+      "type": "n8n-nodes-base.set",
+      "position": [2300, 600],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "kpi_event_id",
+              "name": "kpi.event_id",
+              "value": "={{ $json.event_id }}",
+              "type": "string"
+            },
+            {
+              "id": "kpi_event_type",
+              "name": "kpi.event_type",
+              "value": "={{ $json.event_type }}",
+              "type": "string"
+            },
+            {
+              "id": "kpi_agent_used",
+              "name": "kpi.agent_used",
+              "value": "={{ $json.agent_used }}",
+              "type": "string"
+            },
+            {
+              "id": "kpi_channel",
+              "name": "kpi.channel",
+              "value": "={{ $json.channel }}",
+              "type": "string"
+            },
+            {
+              "id": "kpi_language",
+              "name": "kpi.language",
+              "value": "={{ $json.language }}",
+              "type": "string"
+            },
+            {
+              "id": "kpi_confidence",
+              "name": "kpi.confidence",
+              "value": "={{ $json.confidence }}",
+              "type": "number"
+            },
+            {
+              "id": "kpi_escalated",
+              "name": "kpi.escalated",
+              "value": "={{ $json.escalated }}",
+              "type": "boolean"
+            },
+            {
+              "id": "kpi_timestamp",
+              "name": "kpi.timestamp",
+              "value": "={{ $json.timestamp }}",
+              "type": "string"
+            },
+            {
+              "id": "kpi_date",
+              "name": "kpi.date",
+              "value": "={{ $json.timestamp.split('T')[0] }}",
+              "type": "string"
+            },
+            {
+              "id": "kpi_hour",
+              "name": "kpi.hour",
+              "value": "={{ new Date($json.timestamp).getHours() }}",
+              "type": "number"
+            },
+            {
+              "id": "kpi_day_of_week",
+              "name": "kpi.day_of_week",
+              "value": "={{ new Date($json.timestamp).getDay() }}",
+              "type": "number"
+            },
+            {
+              "id": "kpi_intent",
+              "name": "kpi.intent",
+              "value": "={{ $json.intent }}",
+              "type": "string"
+            },
+            {
+              "id": "kpi_sentiment",
+              "name": "kpi.sentiment",
+              "value": "={{ $json._raw_snapshot?.sentiment || 'neutral' }}",
+              "type": "string"
+            },
+            {
+              "id": "kpi_category",
+              "name": "kpi.category",
+              "value": "={{ $json._raw_snapshot?.category || null }}",
+              "type": "string"
+            },
+            {
+              "id": "kpi_session_id",
+              "name": "kpi.session_id",
+              "value": "={{ $json.session_id }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {
+          "keepOnlySet": false
+        }
+      },
+      "notes": "📊 KPI EVENT NORMALIZATION\n\n=== PURPOSE ===\nTransforms raw analytics events into dashboard-ready KPI schema.\nPre-computes time dimensions for fast aggregation queries.\n\n=== UNIFIED ANALYTICS_EVENTS SCHEMA ===\n┌─────────────────────────────────────────────────────────────┐\n│ FIELD            │ TYPE     │ PURPOSE                      │\n├─────────────────────────────────────────────────────────────┤\n│ event_id         │ string   │ Unique ID for deduplication  │\n│ event_type       │ enum     │ LEAD/COMPLAINT/ESCALATION/NO │\n│ agent_used       │ string   │ Agent workload tracking      │\n│ channel          │ string   │ Channel comparison           │\n│ language         │ string   │ Language distribution        │\n│ confidence       │ number   │ AI accuracy (0-1)            │\n│ escalated        │ boolean  │ Escalation rate calc         │\n│ timestamp        │ ISO8601  │ Exact event time             │\n│ date             │ DATE     │ Daily aggregation            │\n│ hour             │ 0-23     │ Hourly patterns              │\n│ day_of_week      │ 0-6      │ Weekly patterns (Sun=0)      │\n│ intent           │ string   │ Intent analysis              │\n│ sentiment        │ string   │ Customer sentiment           │\n│ category         │ string   │ Complaint categorization     │\n│ session_id       │ string   │ Session correlation          │\n└─────────────────────────────────────────────────────────────┘\n\n=== TIME DIMENSIONS FOR DASHBOARDS ===\n• date: GROUP BY for daily charts (Leads per Day)\n• hour: Heatmap X-axis (Escalation Heatmap)\n• day_of_week: Heatmap Y-axis (0=Sun, 6=Sat)\n\n=== SQL SCHEMA REFERENCE ===\nSee: backend/db/analytics_schema.sql"
+    },
+
+    {
+      "id": "node_compute_derived_metrics",
+      "name": "Compute_Derived_Metrics",
+      "type": "n8n-nodes-base.function",
+      "position": [2550, 600],
+      "parameters": {
+        "functionCode": "// Compute Derived Metrics\n// Calculates real-time KPIs for the current event\n// NOTE: Aggregate metrics require database queries\n\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const kpi = item.json.kpi;\n  \n  // ========================================\n  // EXPLICIT TIME DIMENSION COMPUTATION\n  // Computed from timestamp using JavaScript Date\n  // ========================================\n  const eventDate = new Date(kpi.timestamp);\n  \n  // date: YYYY-MM-DD format for daily aggregation\n  const date = eventDate.toISOString().split('T')[0];\n  \n  // hour: 0-23 for hourly patterns\n  const hour = eventDate.getHours();\n  \n  // day_of_week: 0-6, where Sunday = 0\n  const day_of_week = eventDate.getDay();\n  \n  // Real-time derived metrics for this event\n  const derived_metrics = {\n    // ========================================\n    // TIME DIMENSIONS (explicitly computed)\n    // ========================================\n    date: date,\n    hour: hour,\n    day_of_week: day_of_week,\n    \n    // Confidence bucketing for histogram\n    confidence_bucket: getConfidenceBucket(kpi.confidence),\n    \n    // Time-based flags (using computed values)\n    is_business_hours: isBusinessHours(hour),\n    is_weekend: day_of_week === 0 || day_of_week === 6,\n    \n    // Event classification flags (for faster filtering)\n    is_lead: kpi.event_type === 'LEAD_CREATED',\n    is_complaint: kpi.event_type === 'COMPLAINT_LOGGED',\n    is_escalation: kpi.escalated === true,\n    \n    // Composite scores\n    urgency_score: calculateUrgencyScore(kpi),\n    \n    // Aggregation keys (for GROUP BY in dashboards)\n    agg_key_daily: `${date}_${kpi.agent_used}`,\n    agg_key_channel: `${date}_${kpi.channel}`,\n    agg_key_hourly: `${date}_${hour}_${kpi.channel}`\n  };\n  \n  results.push({\n    json: {\n      ...item.json,\n      kpi: {\n        ...kpi,\n        ...derived_metrics\n      }\n    }\n  });\n}\n\n// Helper: Bucket confidence scores\nfunction getConfidenceBucket(confidence) {\n  if (confidence >= 0.9) return 'very_high';\n  if (confidence >= 0.7) return 'high';\n  if (confidence >= 0.5) return 'medium';\n  if (confidence >= 0.3) return 'low';\n  return 'very_low';\n}\n\n// Helper: Check business hours (Egypt: 9 AM - 6 PM)\nfunction isBusinessHours(hour) {\n  return hour >= 9 && hour < 18;\n}\n\n// Helper: Calculate urgency score\nfunction calculateUrgencyScore(kpi) {\n  let score = 0;\n  \n  // Escalations are high urgency\n  if (kpi.escalated) score += 50;\n  \n  // Complaints increase urgency\n  if (kpi.event_type === 'COMPLAINT_LOGGED') score += 30;\n  \n  // Negative sentiment increases urgency\n  if (kpi.sentiment === 'negative') score += 20;\n  \n  // Low confidence = potential misrouting\n  if (kpi.confidence < 0.5) score += 10;\n  \n  return Math.min(score, 100); // Cap at 100\n}\n\nreturn results;"
+      },
+      "notes": "📊 DERIVED METRICS COMPUTATION\n\n=== PURPOSE ===\nEnriches KPI events with computed fields for faster dashboard queries.\nPre-calculates aggregation keys to avoid runtime GROUP BY overhead.\n\n=== TIME DIMENSIONS (from timestamp) ===\n┌─────────────┬───────────────────────────────────────┐\n│ date        │ YYYY-MM-DD via toISOString().split    │\n│ hour        │ 0-23 via Date.getHours()              │\n│ day_of_week │ 0-6 via Date.getDay() (Sunday = 0)    │\n└─────────────┴───────────────────────────────────────┘\n\n=== REAL-TIME METRICS (per-event) ===\n┌────────────────────┬─────────────────────────────────────┐\n│ confidence_bucket  │ very_high|high|medium|low|very_low │\n│ is_business_hours  │ Egypt 9 AM - 6 PM (hour 9-17)       │\n│ is_weekend         │ day_of_week === 0 or 6              │\n│ is_lead            │ event_type = 'LEAD_CREATED'         │\n│ is_complaint       │ event_type = 'COMPLAINT_LOGGED'     │\n│ is_escalation      │ escalated = true                    │\n│ urgency_score      │ 0-100 composite (see formula)       │\n│ agg_key_daily      │ date_agent for GROUP BY             │\n│ agg_key_channel    │ date_channel for GROUP BY           │\n│ agg_key_hourly     │ date_hour_channel for GROUP BY      │\n└────────────────────┴─────────────────────────────────────┘\n\n=== URGENCY SCORE FORMULA ===\n┌─────────────────────────┬────────┐\n│ Condition               │ Points │\n├─────────────────────────┼────────┤\n│ escalated = true        │ +50    │\n│ event_type = COMPLAINT  │ +30    │\n│ sentiment = negative    │ +20    │\n│ confidence < 0.5        │ +10    │\n├─────────────────────────┼────────┤\n│ Maximum                 │ 100    │\n└─────────────────────────┴────────┘\n\n=== DASHBOARD KPI QUERIES ===\n\n1️⃣ LEADS PER DAY (Line Chart)\nSELECT date, COUNT(*) FROM analytics_events\nWHERE is_lead = TRUE GROUP BY date;\n\n2️⃣ COMPLAINTS VS SALES (Stacked Bar)\nSELECT date,\n  COUNT(*) FILTER (WHERE is_lead) AS leads,\n  COUNT(*) FILTER (WHERE is_complaint) AS complaints\nFROM analytics_events GROUP BY date;\n\n3️⃣ ESCALATION HEATMAP (Heatmap)\nSELECT day_of_week, hour,\n  COUNT(*) FILTER (WHERE is_escalation) AS escalations\nFROM analytics_events GROUP BY day_of_week, hour;\n\n4️⃣ CHANNEL CONFIDENCE (Grouped Bar)\nSELECT channel, agent_used, AVG(confidence)\nFROM analytics_events GROUP BY channel, agent_used;\n\n=== SQL REFERENCE ===\nFull queries: backend/db/analytics_schema.sql"
+    },
+
+    {
+      "id": "node_analytics_db_sink",
+      "name": "Analytics_DB_Sink",
+      "type": "n8n-nodes-base.postgres",
+      "position": [2800, 600],
+      "parameters": {
+        "operation": "insert",
+        "schema": "public",
+        "table": "analytics_events",
+        "columns": "event_id, event_type, agent_used, channel, language, confidence, confidence_bucket, escalated, timestamp, date, hour, day_of_week, intent, sentiment, category, session_id, is_business_hours, is_weekend, is_lead, is_complaint, is_escalation, urgency_score, agg_key_daily, agg_key_channel, agg_key_hourly",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "__POSTGRES_CREDENTIAL_ID__",
+          "name": "__POSTGRES_ANALYTICS_DB__"
+        }
+      },
+      "continueOnFail": true,
+      "notes": "⚠️ PLACEHOLDER - ANALYTICS DATABASE SINK ⚠️\n\n=== CRITICAL: continueOnFail = true ===\nThis node MUST have continueOnFail enabled.\nAnalytics failures must NEVER block chatbot response.\n\n=== CONFIGURATION STEPS ===\n1. Run schema: psql -f backend/db/analytics_schema.sql\n2. Create PostgreSQL credential in n8n Settings\n3. Replace '__POSTGRES_CREDENTIAL_ID__' with credential ID\n4. Test with sample data before production\n\n=== DATA FLOW ===\nAnalytics_Event_Mirror → Normalize_KPI_Event → \nCompute_Derived_Metrics → [THIS NODE] → Analytics_Error_Handler\n\n=== INSERTED COLUMNS ===\nevent_id, event_type, agent_used, channel, language,\nconfidence, confidence_bucket, escalated, timestamp, date,\nhour, day_of_week, intent, sentiment, category, session_id,\nis_business_hours, is_weekend, is_lead, is_complaint,\nis_escalation, urgency_score, agg_key_daily, agg_key_channel,\nagg_key_hourly\n\n=== FULL SCHEMA ===\nSee: backend/db/analytics_schema.sql\n• Complete CREATE TABLE statement\n• All indexes for dashboard performance\n• Example KPI queries\n• Materialized views for large datasets\n\n=== DASHBOARD CONNECTIONS ===\n┌──────────────┬─────────────────────────────────┐\n│ Tool         │ Connection                      │\n├──────────────┼─────────────────────────────────┤\n│ Metabase     │ PostgreSQL datasource           │\n│ Grafana      │ PostgreSQL + $__timeFilter      │\n│ Looker       │ LookML model from table         │\n│ Superset     │ PostgreSQL connection           │\n│ Data Studio  │ BigQuery connector or direct    │\n└──────────────┴─────────────────────────────────┘\n\n=== ALTERNATIVE SINKS ===\n• Google Sheets: Quick dashboards, limited scale\n• ClickHouse: High-volume OLAP\n• BigQuery: GCP enterprise analytics\n• TimescaleDB: Time-series optimized"
+    },
+
+    {
+      "id": "node_analytics_error_handler",
+      "name": "Analytics_Error_Handler",
+      "type": "n8n-nodes-base.function",
+      "position": [3050, 600],
+      "parameters": {
+        "functionCode": "// Analytics Error Handler\n// Gracefully handles analytics sink failures\n// NEVER affects chatbot response\n\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const analytics_status = {\n    success: true,\n    error: null,\n    timestamp: new Date().toISOString()\n  };\n\n  if (item.error) {\n    analytics_status.success = false;\n    analytics_status.error = {\n      message: item.error.message || 'Analytics sink error',\n      code: 'ANALYTICS_SINK_FAILED',\n      event_id: item.json?.kpi?.event_id || 'unknown'\n    };\n    \n    // Log but don't throw\n    console.error('[ANALYTICS_ERROR]', analytics_status.error);\n  }\n\n  results.push({\n    json: {\n      ...item.json,\n      _analytics_status: analytics_status\n    }\n  });\n}\n\nreturn results;"
+      },
+      "notes": "📊 ANALYTICS ERROR HANDLER\n\n=== PURPOSE ===\nGracefully handles analytics database failures:\n- Logs errors for debugging\n- NEVER breaks the chatbot flow\n- Enables failed event recovery\n\n=== ERROR RECOVERY ===\n1. Check n8n Execution History for failed events\n2. Query _analytics_status in response for debugging\n3. Implement dead-letter queue for critical analytics"
+    },
+
+    {
+      "id": "node_crm_response_merge",
+      "name": "CRM_Response_Merge",
+      "type": "n8n-nodes-base.merge",
+      "position": [3200, 250],
+      "parameters": {
+        "mode": "multiplex"
+      },
+      "notes": "Merges CRM-processed and CRM-skipped paths."
+    },
+
+    {
+      "id": "node_final_response_merge",
+      "name": "Final_Response_Merge",
+      "type": "n8n-nodes-base.merge",
+      "position": [3400, 400],
+      "parameters": {
+        "mode": "multiplex"
+      },
+      "notes": "Final merge of CRM and Analytics parallel paths.\nBoth paths complete before response is returned.\n\nIMPORTANT: With continueOnFail on both sinks,\nresponse is guaranteed even if CRM or Analytics fail."
+    },
+
+    {
+      "id": "node_return_response",
+      "name": "Return_Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "position": [3600, 400],
+      "notes": "Returns final JSON response to webhook caller.\n\nIMPORTANT: This node is reached regardless of CRM or Analytics success/failure.\nThe chatbot response is NEVER delayed or blocked by downstream operations."
+    }
+  ],
+  "connections": {
+    "Webhook_In": {
+      "main": [[{ "node": "Normalize_Input", "type": "main", "index": 0 }]]
+    },
+    "Normalize_Input": {
+      "main": [[{ "node": "Detect_Intent", "type": "main", "index": 0 }]]
+    },
+    "Detect_Intent": {
+      "main": [[{ "node": "Load_Agent_Config", "type": "main", "index": 0 }]]
+    },
+    "Load_Agent_Config": {
+      "main": [[{ "node": "Check_Escalation", "type": "main", "index": 0 }]]
+    },
+    "Check_Escalation": {
+      "main": [
+        [{ "node": "Fetch_Knowledge", "type": "main", "index": 0 }],
+        [{ "node": "Escalate_To_Human", "type": "main", "index": 0 }]
+      ]
+    },
+    "Fetch_Knowledge": {
+      "main": [[{ "node": "Apply_Business_Rules", "type": "main", "index": 0 }]]
+    },
+    "Apply_Business_Rules": {
+      "main": [[{ "node": "Generate_Response", "type": "main", "index": 0 }]]
+    },
+    "Generate_Response": {
+      "main": [[{ "node": "Log_Interaction", "type": "main", "index": 0 }]]
+    },
+    "Escalate_To_Human": {
+      "main": [[{ "node": "Log_Interaction", "type": "main", "index": 0 }]]
+    },
+    "Log_Interaction": {
+      "main": [
+        [{ "node": "CRM_Event_Router", "type": "main", "index": 0 }],
+        [{ "node": "Analytics_Event_Mirror", "type": "main", "index": 0 }]
+      ]
+    },
+    "CRM_Event_Router": {
+      "main": [
+        [{ "node": "Set_Payload_LEAD_CREATED", "type": "main", "index": 0 }],
+        [{ "node": "Set_Payload_COMPLAINT_LOGGED", "type": "main", "index": 0 }],
+        [{ "node": "Set_Payload_ESCALATION", "type": "main", "index": 0 }],
+        [{ "node": "CRM_NoOp_Skip", "type": "main", "index": 0 }]
+      ]
+    },
+    "Set_Payload_LEAD_CREATED": {
+      "main": [[{ "node": "CRM_Payload_Merge", "type": "main", "index": 0 }]]
+    },
+    "Set_Payload_COMPLAINT_LOGGED": {
+      "main": [[{ "node": "CRM_Payload_Merge", "type": "main", "index": 1 }]]
+    },
+    "Set_Payload_ESCALATION": {
+      "main": [[{ "node": "CRM_Payload_Merge", "type": "main", "index": 2 }]]
+    },
+    "CRM_Payload_Merge": {
+      "main": [[{ "node": "JanssenCRM_Build_SQL", "type": "main", "index": 0 }]]
+    },
+    "JanssenCRM_Build_SQL": {
+      "main": [[{ "node": "JanssenCRM_Insert_CustomerCall", "type": "main", "index": 0 }]]
+    },
+    "JanssenCRM_Insert_CustomerCall": {
+      "main": [[{ "node": "JanssenCRM_Check_Ticket_Needed", "type": "main", "index": 0 }]]
+    },
+    "JanssenCRM_Check_Ticket_Needed": {
+      "main": [
+        [{ "node": "JanssenCRM_Insert_Ticket", "type": "main", "index": 0 }],
+        [{ "node": "JanssenCRM_Merge", "type": "main", "index": 1 }]
+      ]
+    },
+    "JanssenCRM_Insert_Ticket": {
+      "main": [[{ "node": "JanssenCRM_Check_TicketItem_Needed", "type": "main", "index": 0 }]]
+    },
+    "JanssenCRM_Check_TicketItem_Needed": {
+      "main": [
+        [{ "node": "JanssenCRM_Insert_TicketItem", "type": "main", "index": 0 }],
+        [{ "node": "JanssenCRM_Check_Media_Needed", "type": "main", "index": 0 }]
+      ]
+    },
+    "JanssenCRM_Insert_TicketItem": {
+      "main": [[{ "node": "JanssenCRM_Check_Media_Needed", "type": "main", "index": 0 }]]
+    },
+    "JanssenCRM_Check_Media_Needed": {
+      "main": [
+        [{ "node": "JanssenCRM_Insert_Media", "type": "main", "index": 0 }],
+        [{ "node": "JanssenCRM_Merge", "type": "main", "index": 2 }]
+      ]
+    },
+    "JanssenCRM_Insert_Media": {
+      "main": [[{ "node": "JanssenCRM_Execute_Media_Insert", "type": "main", "index": 0 }]]
+    },
+    "JanssenCRM_Execute_Media_Insert": {
+      "main": [[{ "node": "JanssenCRM_Merge", "type": "main", "index": 0 }]]
+    },
+    "JanssenCRM_Merge": {
+      "main": [[{ "node": "CRM_Error_Handler", "type": "main", "index": 0 }]]
+    },
+    "CRM_Error_Handler": {
+      "main": [[{ "node": "CRM_Response_Merge", "type": "main", "index": 0 }]]
+    },
+    "CRM_NoOp_Skip": {
+      "main": [[{ "node": "CRM_Response_Merge", "type": "main", "index": 1 }]]
+    },
+    "Analytics_Event_Mirror": {
+      "main": [[{ "node": "Normalize_KPI_Event", "type": "main", "index": 0 }]]
+    },
+    "Normalize_KPI_Event": {
+      "main": [[{ "node": "Compute_Derived_Metrics", "type": "main", "index": 0 }]]
+    },
+    "Compute_Derived_Metrics": {
+      "main": [[{ "node": "Analytics_DB_Sink", "type": "main", "index": 0 }]]
+    },
+    "Analytics_DB_Sink": {
+      "main": [[{ "node": "Analytics_Error_Handler", "type": "main", "index": 0 }]]
+    },
+    "CRM_Response_Merge": {
+      "main": [[{ "node": "Final_Response_Merge", "type": "main", "index": 0 }]]
+    },
+    "Analytics_Error_Handler": {
+      "main": [[{ "node": "Final_Response_Merge", "type": "main", "index": 1 }]]
+    },
+    "Final_Response_Merge": {
+      "main": [[{ "node": "Return_Response", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "errorWorkflow": "CRM_Error_Workflow"
+  },
+  "tags": ["janssen-ai", "chatbot", "customer-service", "blueprint", "crm-sync", "analytics", "kpi"],
+  "integrations": {
+    "database": "PLACEHOLDER_POSTGRES_CONNECTION",
+    "llm": "PLACEHOLDER_OPENAI_API",
+    "crm": "__CRM_ENDPOINT__",
+    "analytics_db": "__POSTGRES_ANALYTICS_DB__",
+    "janssencrm": {
+      "schema_extension": "backend/db/janssencrm_schema_extension.sql",
+      "tables_extended": ["customercall", "tickets"],
+      "channel_values": ["chat", "voice", "whatsapp"],
+      "mysql_credential": "__JANSSENCRM_MYSQL__",
+      "mysql_operations": {
+        "customercall": "INSERT on all CRM events",
+        "tickets": "INSERT on COMPLAINT_LOGGED and ESCALATION events",
+        "ticket_items": "INSERT when product data is extracted"
+      }
+    }
+  },
+  "crm_event_documentation": {
+    "_readme": "=== CRM EVENT SYNC DOCUMENTATION ===",
+    "overview": "This workflow synchronizes customer interactions with external CRM systems in a non-blocking, fault-tolerant manner.",
+    "design_principles": {
+      "async_by_design": "CRM sync happens AFTER the AI response is generated but BEFORE it's returned. The 'continueOnFail' flag ensures CRM errors never block responses.",
+      "ai_never_waits": "The chatbot response time is unaffected by CRM latency or failures. Users always get immediate responses.",
+      "graceful_degradation": "If CRM is down, the chatbot continues working normally. Failed events are logged for later recovery."
+    },
+    "event_types": {
+      "LEAD_CREATED": {
+        "trigger": "agent_used == 'sales' AND confidence >= 0.5",
+        "purpose": "Capture potential sales opportunities for follow-up",
+        "fields": ["event_type", "session_id", "phone", "channel", "language", "intent", "confidence", "timestamp"],
+        "janssencrm_fields": ["ai_intent", "ai_confidence", "ai_agent", "ai_session_id"]
+      },
+      "COMPLAINT_LOGGED": {
+        "trigger": "agent_used == 'complaint'",
+        "purpose": "Track customer complaints for quality and resolution",
+        "fields": ["event_type", "session_id", "phone", "category", "sentiment", "channel", "timestamp"],
+        "janssencrm_fields": ["ai_intent", "ai_confidence", "ai_agent", "ai_session_id"]
+      },
+      "ESCALATION": {
+        "trigger": "escalated == true",
+        "purpose": "Log escalations to human agents for SLA tracking",
+        "fields": ["event_type", "session_id", "queue", "escalation_reason", "channel", "timestamp"],
+        "janssencrm_fields": ["escalated_by_ai", "escalation_reason", "ai_agent", "ai_session_id", "ai_urgency_score", "ai_intent", "ai_confidence"]
+      }
+    },
+    "janssencrm_integration": {
+      "_schema_file": "backend/db/janssencrm_schema_extension.sql",
+      "overview": "Extended JanssenCRM tables to store AI interaction metadata without modifying existing business logic.",
+      "channel_enforcement": {
+        "valid_values": ["chat", "voice", "whatsapp"],
+        "default": "chat",
+        "note": "Channel field is included in all CRM payloads and mapped to both customercall.channel and tickets.channel"
+      },
+      "customercall_mapping": {
+        "table": "customercall",
+        "ai_fields": {
+          "ai_intent": "VARCHAR(100) - AI-detected customer intent",
+          "ai_confidence": "DECIMAL(4,3) - AI confidence score (0.000-1.000)",
+          "ai_agent": "VARCHAR(30) - AI agent that handled the call",
+          "channel": "VARCHAR(20) - Communication channel (chat/voice/whatsapp)",
+          "ai_session_id": "VARCHAR(100) - Reference to AI conversation session"
+        },
+        "events_using": ["LEAD_CREATED", "COMPLAINT_LOGGED"]
+      },
+      "tickets_mapping": {
+        "table": "tickets",
+        "ai_fields": {
+          "escalated_by_ai": "TINYINT(1) - Flag indicating AI escalation",
+          "escalation_reason": "VARCHAR(255) - Reason for AI escalation",
+          "channel": "VARCHAR(20) - Communication channel (chat/voice/whatsapp)",
+          "ai_session_id": "VARCHAR(100) - Reference to AI conversation session",
+          "ai_urgency_score": "SMALLINT - AI-computed urgency score (0-100)",
+          "ai_agent": "VARCHAR(30) - AI agent that escalated"
+        },
+        "events_using": ["ESCALATION"]
+      },
+      "payload_structure": {
+        "note": "JanssenCRM-specific fields are nested under crm_payload.janssencrm",
+        "example": {
+          "crm_payload": {
+            "event_type": "LEAD_CREATED",
+            "session_id": "sess_123",
+            "channel": "whatsapp",
+            "janssencrm": {
+              "ai_intent": "buy_mattress",
+              "ai_confidence": 0.85,
+              "ai_agent": "sales",
+              "ai_session_id": "sess_123"
+            }
+          }
+        }
+      }
+    },
+    "replacing_placeholder": {
+      "step_1": "Run schema extension: mysql < backend/db/janssencrm_schema_extension.sql",
+      "step_2": "Open CRM_HTTP_Request node in n8n editor",
+      "step_3": "Replace '__CRM_ENDPOINT__' with your JanssenCRM API endpoint",
+      "step_4": "Add authentication headers if required (Settings > Headers)",
+      "step_5": "Map crm_payload.janssencrm fields to your API request body",
+      "step_6": "Test with a sample payload to verify connectivity",
+      "alternatives": {
+        "janssencrm_direct_db": "Replace HTTP node with MySQL node, INSERT directly into customercall/tickets",
+        "salesforce": "Replace HTTP node with Salesforce node, configure OAuth2",
+        "hubspot": "Use HubSpot node with API key authentication"
+      }
+    },
+    "error_recovery": {
+      "manual_retry": "Failed executions can be retried from n8n Execution History",
+      "dead_letter_queue": "Implement separate workflow to process failed events",
+      "batch_sync": "Implement scheduled workflow to bulk-sync failed events"
+    }
+  },
+  "analytics_documentation": {
+    "_readme": "=== ANALYTICS & KPI LAYER DOCUMENTATION ===",
+    "_schema_file": "backend/db/analytics_schema.sql",
+    "overview": "Passive, read-only analytics layer that captures ALL interactions for KPI tracking and dashboard visualization. Events are inserted from Analytics_Event_Mirror node ONLY.",
+    
+    "design_principles": {
+      "passive_by_design": "Analytics ONLY observes - never modifies interaction data or affects chatbot behavior.",
+      "crm_independent": "Analytics runs in PARALLEL to CRM. Works even if CRM is disabled or fails.",
+      "zero_latency_impact": "Analytics_DB_Sink has continueOnFail=true, ensuring response is never blocked.",
+      "single_source": "All analytics events flow through Analytics_Event_Mirror → Normalize_KPI_Event → Compute_Derived_Metrics → Analytics_DB_Sink"
+    },
+    
+    "unified_schema": {
+      "_table": "analytics_events",
+      "core_identifiers": {
+        "event_id": "VARCHAR(50) UNIQUE - Unique event ID (evt_timestamp_random)",
+        "session_id": "VARCHAR(100) - Conversation session ID"
+      },
+      "event_classification": {
+        "event_type": "VARCHAR(30) - LEAD_CREATED | COMPLAINT_LOGGED | ESCALATION | NO_CRM_EVENT",
+        "agent_used": "VARCHAR(30) - sales | support | warranty | complaint | escalation",
+        "intent": "VARCHAR(100) - Detected customer intent"
+      },
+      "channel_and_language": {
+        "channel": "VARCHAR(20) - chat | voice | whatsapp",
+        "language": "VARCHAR(5) - ar | en"
+      },
+      "ai_metrics": {
+        "confidence": "DECIMAL(4,3) - AI confidence score (0.000 - 1.000)",
+        "confidence_bucket": "VARCHAR(20) - very_high | high | medium | low | very_low",
+        "sentiment": "VARCHAR(20) - positive | neutral | negative"
+      },
+      "status_flags": {
+        "escalated": "BOOLEAN - Human escalation flag",
+        "is_lead": "BOOLEAN - event_type = 'LEAD_CREATED'",
+        "is_complaint": "BOOLEAN - event_type = 'COMPLAINT_LOGGED'",
+        "is_escalation": "BOOLEAN - escalated = true"
+      },
+      "urgency": {
+        "urgency_score": "SMALLINT 0-100 - Composite score (+50 escalation, +30 complaint, +20 negative sentiment, +10 low confidence)"
+      },
+      "time_dimensions": {
+        "timestamp": "TIMESTAMPTZ - Event timestamp (ISO 8601)",
+        "date": "DATE - YYYY-MM-DD for daily aggregation",
+        "hour": "SMALLINT 0-23 - For hourly patterns",
+        "day_of_week": "SMALLINT 0-6 - Sunday=0, Saturday=6",
+        "is_business_hours": "BOOLEAN - Egypt 9 AM - 6 PM",
+        "is_weekend": "BOOLEAN - Saturday or Sunday"
+      },
+      "aggregation_keys": {
+        "agg_key_daily": "VARCHAR(100) - date_agent (e.g., '2025-01-29_sales')",
+        "agg_key_channel": "VARCHAR(100) - date_channel (e.g., '2025-01-29_whatsapp')",
+        "agg_key_hourly": "VARCHAR(100) - date_hour_channel (e.g., '2025-01-29_14_voice')"
+      }
+    },
+    
+    "dashboard_queries": {
+      "leads_per_day": {
+        "chart_type": "Line Chart",
+        "description": "Track sales lead generation over time",
+        "sql": "SELECT date, COUNT(*) AS lead_count FROM analytics_events WHERE event_type = 'LEAD_CREATED' GROUP BY date ORDER BY date;",
+        "sql_with_moving_avg": "SELECT date, COUNT(*) AS lead_count, ROUND(AVG(COUNT(*)) OVER (ORDER BY date ROWS BETWEEN 6 PRECEDING AND CURRENT ROW), 2) AS lead_count_7d_avg FROM analytics_events WHERE event_type = 'LEAD_CREATED' GROUP BY date ORDER BY date;"
+      },
+      "complaints_vs_sales": {
+        "chart_type": "Stacked Bar Chart",
+        "description": "Compare positive (leads) vs negative (complaints) interactions",
+        "sql": "SELECT date, COUNT(*) FILTER (WHERE event_type = 'LEAD_CREATED') AS leads, COUNT(*) FILTER (WHERE event_type = 'COMPLAINT_LOGGED') AS complaints, COUNT(*) FILTER (WHERE event_type = 'LEAD_CREATED') - COUNT(*) FILTER (WHERE event_type = 'COMPLAINT_LOGGED') AS net_sentiment FROM analytics_events GROUP BY date ORDER BY date;",
+        "sql_with_ratio": "SELECT date, COUNT(*) FILTER (WHERE event_type = 'LEAD_CREATED') AS leads, COUNT(*) FILTER (WHERE event_type = 'COMPLAINT_LOGGED') AS complaints, CASE WHEN COUNT(*) FILTER (WHERE event_type = 'COMPLAINT_LOGGED') = 0 THEN NULL ELSE ROUND(COUNT(*) FILTER (WHERE event_type = 'LEAD_CREATED')::DECIMAL / COUNT(*) FILTER (WHERE event_type = 'COMPLAINT_LOGGED'), 2) END AS lead_to_complaint_ratio FROM analytics_events GROUP BY date ORDER BY date;"
+      },
+      "escalation_heatmap": {
+        "chart_type": "Heatmap",
+        "description": "Identify peak escalation times for staffing optimization",
+        "x_axis": "hour (0-23)",
+        "y_axis": "day_of_week (Sun-Sat)",
+        "value": "escalation_count or escalation_rate",
+        "sql": "SELECT day_of_week, CASE day_of_week WHEN 0 THEN 'Sunday' WHEN 1 THEN 'Monday' WHEN 2 THEN 'Tuesday' WHEN 3 THEN 'Wednesday' WHEN 4 THEN 'Thursday' WHEN 5 THEN 'Friday' WHEN 6 THEN 'Saturday' END AS day_name, hour, COUNT(*) FILTER (WHERE escalated = TRUE) AS escalation_count, COUNT(*) AS total_events, ROUND(COUNT(*) FILTER (WHERE escalated = TRUE) * 100.0 / NULLIF(COUNT(*), 0), 2) AS escalation_rate_percent FROM analytics_events GROUP BY day_of_week, hour ORDER BY day_of_week, hour;"
+      },
+      "channel_confidence_comparison": {
+        "chart_type": "Grouped Bar Chart",
+        "description": "Compare AI performance across channels",
+        "x_axis": "agent_used",
+        "series": ["chat_confidence", "voice_confidence", "whatsapp_confidence"],
+        "sql": "SELECT agent_used, ROUND(AVG(confidence) FILTER (WHERE channel = 'chat'), 3) AS chat_confidence, ROUND(AVG(confidence) FILTER (WHERE channel = 'voice'), 3) AS voice_confidence, ROUND(AVG(confidence) FILTER (WHERE channel = 'whatsapp'), 3) AS whatsapp_confidence, COUNT(*) FILTER (WHERE channel = 'chat') AS chat_count, COUNT(*) FILTER (WHERE channel = 'voice') AS voice_count, COUNT(*) FILTER (WHERE channel = 'whatsapp') AS whatsapp_count FROM analytics_events GROUP BY agent_used ORDER BY agent_used;",
+        "sql_daily_trend": "SELECT date, ROUND(AVG(confidence) FILTER (WHERE channel = 'voice'), 3) AS voice_avg_confidence, ROUND(AVG(confidence) FILTER (WHERE channel = 'chat'), 3) AS chat_avg_confidence, ROUND(AVG(confidence) FILTER (WHERE channel = 'whatsapp'), 3) AS whatsapp_avg_confidence FROM analytics_events GROUP BY date ORDER BY date;"
+      },
+      "kpi_summary": {
+        "chart_type": "KPI Cards / Stat Panels",
+        "description": "Executive dashboard header metrics",
+        "sql": "SELECT COUNT(*) AS total_events, COUNT(*) FILTER (WHERE event_type = 'LEAD_CREATED') AS total_leads, COUNT(*) FILTER (WHERE event_type = 'COMPLAINT_LOGGED') AS total_complaints, COUNT(*) FILTER (WHERE escalated = TRUE) AS total_escalations, ROUND(AVG(confidence), 3) AS overall_avg_confidence, ROUND(AVG(urgency_score), 1) AS avg_urgency_score, ROUND(COUNT(*) FILTER (WHERE escalated = TRUE) * 100.0 / NULLIF(COUNT(*), 0), 2) AS escalation_rate_percent, ROUND(COUNT(*) FILTER (WHERE event_type = 'LEAD_CREATED') * 100.0 / NULLIF(COUNT(*), 0), 2) AS lead_rate_percent FROM analytics_events WHERE date >= CURRENT_DATE - INTERVAL '30 days';"
+      }
+    },
+    
+    "dashboard_integration": {
+      "metabase": {
+        "setup": [
+          "1. Admin > Databases > Add Database > PostgreSQL",
+          "2. Enter connection: Host, Port 5432, Database, User (readonly)",
+          "3. New Question > Native Query > Paste SQL from dashboard_queries",
+          "4. Save and add to Dashboard"
+        ],
+        "tips": [
+          "Use Summarize for quick aggregations",
+          "Create saved Questions for each KPI",
+          "Set up automatic refresh (15 min recommended)"
+        ]
+      },
+      "grafana": {
+        "setup": [
+          "1. Configuration > Data Sources > Add PostgreSQL",
+          "2. Create Dashboard > Add Panel",
+          "3. Query: Use SQL from dashboard_queries",
+          "4. Time range: Use $__timeFilter(timestamp)"
+        ],
+        "recommended_panels": [
+          "Time series: Leads per day with 7d moving average",
+          "Stat: Current escalation rate (last 24h)",
+          "Heatmap: Escalation by hour/day",
+          "Bar gauge: Confidence by agent and channel",
+          "Pie chart: Channel distribution"
+        ]
+      },
+      "looker": {
+        "setup": [
+          "1. Create LookML project",
+          "2. Generate model from analytics_events table",
+          "3. Define dimensions: date, channel, agent_used, etc.",
+          "4. Define measures: lead_count, escalation_rate, avg_confidence",
+          "5. Build Explores and Dashboards"
+        ]
+      },
+      "superset": {
+        "setup": [
+          "1. Data > Databases > Add PostgreSQL connection",
+          "2. SQL Lab > Run queries from dashboard_queries",
+          "3. Save as Dataset",
+          "4. Build Charts and Dashboards"
+        ]
+      }
+    },
+    
+    "suggested_dashboard_layout": {
+      "row_1_kpi_cards": ["Total Events (30d)", "Lead Rate %", "Escalation Rate %", "Avg Confidence"],
+      "row_2_trends": ["Leads per Day (Line)", "Complaints vs Sales (Stacked Bar)"],
+      "row_3_analysis": ["Escalation Heatmap", "Channel Confidence Comparison"],
+      "row_4_details": ["Agent Workload (Pie)", "Urgency Distribution (Bar)", "Language Split (Donut)"]
+    }
+  }
+}

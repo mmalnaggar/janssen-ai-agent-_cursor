@@ -1,0 +1,520 @@
+{
+  "name": "Janssen_Unified_Agent_Flow",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "janssen-ai-incoming",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook_entry",
+      "name": "Webhook_Entry",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [200, 400],
+      "webhookId": "janssen-ai-incoming"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// NORMALIZE INPUT\n// Purpose: Clean and prepare input for processing\n// ============================================\n\nconst input = $input.first().json;\n\n// --- Helper Functions ---\n\n// Check if text contains Arabic characters\nfunction containsArabic(text) {\n  const arabicPattern = /[\\u0600-\\u06FF\\u0750-\\u077F\\u08A0-\\u08FF]/;\n  return arabicPattern.test(text);\n}\n\n// Remove Arabic diacritics (tashkeel)\nfunction removeArabicDiacritics(text) {\n  return text.replace(/[\\u064B-\\u065F\\u0670]/g, '');\n}\n\n// Normalize Arabic letters (alef, yeh variations)\nfunction normalizeArabic(text) {\n  return text\n    .replace(/[\\u0622\\u0623\\u0625]/g, '\\u0627') // Normalize alef\n    .replace(/[\\u0649]/g, '\\u064A') // Normalize yeh\n    .replace(/[\\u0629]/g, '\\u0647'); // Normalize teh marbuta\n}\n\n// --- Extract and Validate Input ---\n\nconst sessionId = input.session_id || `session_${Date.now()}`;\nconst channel = ['chat', 'voice', 'whatsapp'].includes(input.channel) ? input.channel : 'chat';\nlet userMessage = (input.user_message || '').trim();\nconst metadata = input.metadata || {};\n\n// --- Detect Language ---\n\nlet language = input.language;\nif (!language || !['ar', 'en'].includes(language)) {\n  language = containsArabic(userMessage) ? 'ar' : 'en';\n}\n\n// --- Normalize Message ---\n\nlet normalizedMessage = userMessage;\n\nif (language === 'ar') {\n  // Arabic normalization\n  normalizedMessage = removeArabicDiacritics(normalizedMessage);\n  normalizedMessage = normalizeArabic(normalizedMessage);\n} else {\n  // English normalization\n  normalizedMessage = normalizedMessage.toLowerCase();\n}\n\n// --- Increment Conversation Turn ---\n\nconst conversationTurn = (metadata.conversation_turn || 0) + 1;\n\n// --- Build Output ---\n\nconst output = {\n  session_id: sessionId,\n  channel: channel,\n  language: language,\n  user_message: userMessage,\n  normalized_message: normalizedMessage,\n  metadata: {\n    phone: metadata.phone || null,\n    name: metadata.name || null,\n    previous_intent: metadata.previous_intent || null,\n    conversation_turn: conversationTurn,\n    customer_sentiment: metadata.customer_sentiment || 'neutral'\n  },\n  timestamp: new Date().toISOString()\n};\n\nreturn { json: output };"
+      },
+      "id": "normalize_input",
+      "name": "Normalize_Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [400, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// DETECT INTENT\n// Purpose: Classify user intent using keyword matching\n// Priority: COMPLAINT > HUMAN_REQUEST > WARRANTY > SALES_PRICE > SALES_RECOMMENDATION > DELIVERY > GENERAL_SUPPORT\n// ============================================\n\nconst input = $input.first().json;\nconst message = input.normalized_message || '';\nconst language = input.language || 'ar';\n\n// --- Intent Definitions (Priority Order) ---\n\nconst intents = [\n  {\n    intent: 'COMPLAINT',\n    priority: 1,\n    target_agent: 'complaint',\n    keywords_ar: ['شكوى', 'مشكلة', 'زعلان', 'مش راضي', 'سيء', 'وحش', 'اسوء', 'عايز فلوسي', 'استرجاع', 'ندمان', 'غلط', 'كذب', 'نصب', 'خدعة'],\n    keywords_en: ['complaint', 'problem', 'angry', 'not satisfied', 'bad', 'terrible', 'worst', 'refund', 'return', 'regret', 'wrong', 'lied', 'scam', 'fraud']\n  },\n  {\n    intent: 'HUMAN_REQUEST',\n    priority: 2,\n    target_agent: 'escalation',\n    keywords_ar: ['عايز اتكلم مع حد', 'حد يرد', 'موظف', 'خدمة عملاء', 'بني ادم', 'حد حقيقي', 'مدير', 'مسؤول', 'مش فاهم', 'مش بتفهم'],\n    keywords_en: ['talk to someone', 'speak to agent', 'human', 'customer service', 'real person', 'manager', 'supervisor', 'representative', 'dont understand']\n  },\n  {\n    intent: 'WARRANTY',\n    priority: 3,\n    target_agent: 'warranty',\n    keywords_ar: ['ضمان', 'مدة الضمان', 'تفعيل الضمان', 'شهادة ضمان', 'تصليح', 'صيانة', 'عيب صناعة', 'الضمان ساري', 'انتهى الضمان'],\n    keywords_en: ['warranty', 'guarantee', 'activate warranty', 'warranty certificate', 'repair', 'maintenance', 'defect', 'warranty valid', 'warranty expired']\n  },\n  {\n    intent: 'SALES_PRICE',\n    priority: 4,\n    target_agent: 'sales',\n    keywords_ar: ['سعر', 'بكام', 'كام', 'تكلفة', 'عروض', 'خصم', 'تقسيط', 'اسعار'],\n    keywords_en: ['price', 'cost', 'how much', 'offers', 'discount', 'installment', 'pricing']\n  },\n  {\n    intent: 'SALES_RECOMMENDATION',\n    priority: 5,\n    target_agent: 'sales',\n    keywords_ar: ['عايز اشتري', 'عايز مرتبة', 'انصحني', 'ايه احسن', 'افضل', 'اختار', 'مقاسات', 'انواع', 'منتجات'],\n    keywords_en: ['buy', 'purchase', 'recommend', 'suggest', 'best', 'which one', 'sizes', 'types', 'products', 'mattress']\n  },\n  {\n    intent: 'DELIVERY',\n    priority: 6,\n    target_agent: 'support',\n    keywords_ar: ['توصيل', 'شحن', 'يوصل امتى', 'مدة التوصيل', 'رسوم الشحن', 'مصاريف الشحن'],\n    keywords_en: ['delivery', 'shipping', 'when arrive', 'delivery time', 'shipping cost', 'shipping fee']\n  },\n  {\n    intent: 'GENERAL_SUPPORT',\n    priority: 7,\n    target_agent: 'support',\n    keywords_ar: ['فين الفرع', 'عنوان', 'مواعيد', 'رقم التليفون', 'سؤال', 'استفسار', 'معلومات', 'ازاي', 'فروع'],\n    keywords_en: ['store location', 'address', 'working hours', 'phone number', 'question', 'inquiry', 'information', 'how to', 'branches']\n  }\n];\n\n// --- Keyword Matching ---\n\nlet detectedIntent = 'GENERAL_SUPPORT';\nlet targetAgent = 'support';\nlet matchedKeywords = [];\nlet maxMatches = 0;\nlet confidenceScore = 0.5; // Default for fallback\n\nfor (const intentDef of intents) {\n  const keywords = language === 'ar' ? intentDef.keywords_ar : intentDef.keywords_en;\n  const matches = [];\n  \n  for (const keyword of keywords) {\n    if (message.includes(keyword.toLowerCase())) {\n      matches.push(keyword);\n    }\n  }\n  \n  if (matches.length > 0) {\n    // First match wins (priority order)\n    detectedIntent = intentDef.intent;\n    targetAgent = intentDef.target_agent;\n    matchedKeywords = matches;\n    confidenceScore = Math.min(0.95, 0.5 + (matches.length * 0.15));\n    break; // Stop at first match (priority-based)\n  }\n}\n\n// --- Check for Immediate Escalation Triggers ---\n\nconst legalKeywords = language === 'ar' \n  ? ['محامي', 'قانون', 'شرطة', 'نيابة', 'قضية']\n  : ['lawyer', 'legal', 'police', 'sue', 'court'];\n\nconst mediaKeywords = language === 'ar'\n  ? ['هنشر', 'فيسبوك', 'سوشيال', 'جرنال', 'تويتر']\n  : ['post', 'facebook', 'social media', 'twitter', 'review'];\n\nlet forceEscalation = false;\nlet escalationReason = null;\n\nfor (const kw of legalKeywords) {\n  if (message.includes(kw.toLowerCase())) {\n    forceEscalation = true;\n    escalationReason = 'legal_threat';\n    break;\n  }\n}\n\nif (!forceEscalation) {\n  for (const kw of mediaKeywords) {\n    if (message.includes(kw.toLowerCase())) {\n      forceEscalation = true;\n      escalationReason = 'media_threat';\n      break;\n    }\n  }\n}\n\nif (forceEscalation) {\n  detectedIntent = 'HUMAN_REQUEST';\n  targetAgent = 'escalation';\n  confidenceScore = 1.0;\n}\n\n// --- Build Output ---\n\nconst output = {\n  ...input,\n  intent: {\n    detected: detectedIntent,\n    confidence: confidenceScore,\n    matched_keywords: matchedKeywords\n  },\n  target_agent: targetAgent,\n  force_escalation: forceEscalation,\n  escalation_reason: escalationReason\n};\n\nreturn { json: output };"
+      },
+      "id": "detect_intent",
+      "name": "Detect_Intent",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [600, 400]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.target_agent }}",
+                    "rightValue": "sales",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "sales"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.target_agent }}",
+                    "rightValue": "support",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "support"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.target_agent }}",
+                    "rightValue": "warranty",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "warranty"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.target_agent }}",
+                    "rightValue": "complaint",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "complaint"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.target_agent }}",
+                    "rightValue": "escalation",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "escalation"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "agent_router",
+      "name": "Agent_Router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [800, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// EXECUTE SALES AGENT\n// Purpose: Handle pricing, recommendations, product info\n// ============================================\n\nconst input = $input.first().json;\nconst language = input.language || 'ar';\nconst intent = input.intent?.detected || 'SALES_PRICE';\nconst message = input.normalized_message || '';\n\n// --- Sales Agent Configuration ---\n\nconst tone = {\n  ar: 'Egyptian Arabic, confident, persuasive but polite',\n  en: 'Professional, friendly, sales-oriented'\n};\n\n// --- PLACEHOLDER: Database Queries ---\n// In production, fetch from PostgreSQL:\n// - products table\n// - prices table\n// - promotions table\n\nconst sampleProducts = [\n  {\n    id: 'prod_001',\n    name_ar: 'مرتبة يانسن أورثوبيديك',\n    name_en: 'Janssen Orthopedic Mattress',\n    price: 12500,\n    currency: 'EGP',\n    warranty_years: 10\n  },\n  {\n    id: 'prod_002',\n    name_ar: 'مرتبة يانسن ميموري فوم',\n    name_en: 'Janssen Memory Foam Mattress',\n    price: 15000,\n    currency: 'EGP',\n    warranty_years: 12\n  }\n];\n\n// --- Generate Response ---\n\nlet responseText = '';\nlet responseType = 'text';\nlet productCard = null;\nlet escalationRequired = false;\n\nif (intent === 'SALES_PRICE') {\n  // Price inquiry response\n  if (language === 'ar') {\n    responseText = `تمام! أسعار المراتب عندنا بتبدأ من ${sampleProducts[0].price.toLocaleString()} جنيه. عندنا موديلات مختلفة:\\n\\n`;\n    responseText += `- ${sampleProducts[0].name_ar}: ${sampleProducts[0].price.toLocaleString()} جنيه (ضمان ${sampleProducts[0].warranty_years} سنين)\\n`;\n    responseText += `- ${sampleProducts[1].name_ar}: ${sampleProducts[1].price.toLocaleString()} جنيه (ضمان ${sampleProducts[1].warranty_years} سنة)\\n\\n`;\n    responseText += 'عايز تعرف تفاصيل أكتر عن موديل معين؟';\n  } else {\n    responseText = `Great! Our mattress prices start from ${sampleProducts[0].price.toLocaleString()} EGP. We have different models:\\n\\n`;\n    responseText += `- ${sampleProducts[0].name_en}: ${sampleProducts[0].price.toLocaleString()} EGP (${sampleProducts[0].warranty_years}-year warranty)\\n`;\n    responseText += `- ${sampleProducts[1].name_en}: ${sampleProducts[1].price.toLocaleString()} EGP (${sampleProducts[1].warranty_years}-year warranty)\\n\\n`;\n    responseText += 'Would you like more details about a specific model?';\n  }\n} else if (intent === 'SALES_RECOMMENDATION') {\n  // Recommendation response with product card\n  responseType = 'product_card';\n  const product = sampleProducts[0];\n  \n  if (language === 'ar') {\n    responseText = 'بناءً على احتياجاتك، أنصحك بالمرتبة دي:';\n  } else {\n    responseText = 'Based on your needs, I recommend this mattress:';\n  }\n  \n  productCard = {\n    id: product.id,\n    name: language === 'ar' ? product.name_ar : product.name_en,\n    description: language === 'ar' \n      ? 'مرتبة طبية عالية الجودة مع دعم ممتاز للظهر'\n      : 'Premium orthopedic mattress with excellent back support',\n    price: `${product.price.toLocaleString()} ${product.currency}`,\n    warranty: `${product.warranty_years} ${language === 'ar' ? 'سنين ضمان' : 'years warranty'}`,\n    image_url: 'PLACEHOLDER_IMAGE_URL'\n  };\n} else {\n  // Default sales response\n  if (language === 'ar') {\n    responseText = 'أهلاً! أنا هنا أساعدك تختار المرتبة المناسبة ليك. عايز تعرف عن الأسعار ولا عايز نصيحة؟';\n  } else {\n    responseText = 'Hello! I\\'m here to help you choose the right mattress. Would you like to know about prices or get a recommendation?';\n  }\n}\n\n// --- Check for Bulk Order (requires escalation) ---\n\nconst bulkKeywords = language === 'ar' \n  ? ['جملة', 'كمية', 'شركة', 'فندق', 'مستشفى']\n  : ['bulk', 'wholesale', 'company', 'hotel', 'hospital'];\n\nfor (const kw of bulkKeywords) {\n  if (message.includes(kw)) {\n    escalationRequired = true;\n    break;\n  }\n}\n\n// --- Build Output ---\n\nconst output = {\n  ...input,\n  agent_used: 'sales',\n  response_type: responseType,\n  content: {\n    text: responseText,\n    product: productCard\n  },\n  escalation_required: escalationRequired,\n  actions_taken: ['FETCH_PRODUCT', 'FETCH_PRICE']\n};\n\nreturn { json: output };"
+      },
+      "id": "execute_sales",
+      "name": "Execute_Sales_Agent",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1050, 100]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// EXECUTE SUPPORT AGENT\n// Purpose: Handle delivery, locations, FAQs, general support\n// ============================================\n\nconst input = $input.first().json;\nconst language = input.language || 'ar';\nconst intent = input.intent?.detected || 'GENERAL_SUPPORT';\nconst message = input.normalized_message || '';\n\n// --- Support Agent Configuration ---\n\nconst tone = {\n  ar: 'Egyptian Arabic, calm and reassuring',\n  en: 'Clear, calm, and helpful'\n};\n\n// --- PLACEHOLDER: Database Queries ---\n// In production, fetch from PostgreSQL:\n// - delivery_rules table\n// - store_locations table\n// - faq_database\n\nconst deliveryInfo = {\n  cairo_giza: {\n    ar: 'القاهرة والجيزة: التوصيل خلال 2-3 أيام عمل',\n    en: 'Cairo & Giza: Delivery within 2-3 business days'\n  },\n  alexandria: {\n    ar: 'الإسكندرية: التوصيل خلال 3-5 أيام عمل',\n    en: 'Alexandria: Delivery within 3-5 business days'\n  },\n  other: {\n    ar: 'باقي المحافظات: التوصيل خلال 5-7 أيام عمل',\n    en: 'Other governorates: Delivery within 5-7 business days'\n  },\n  free_threshold: {\n    ar: 'التوصيل مجاني للطلبات فوق 5000 جنيه',\n    en: 'Free delivery for orders above 5000 EGP'\n  }\n};\n\nconst storeInfo = {\n  ar: 'عندنا فروع في: مدينة نصر، المهندسين، الإسكندرية. عايز عنوان فرع معين؟',\n  en: 'We have branches in: Nasr City, Mohandessin, Alexandria. Would you like a specific branch address?'\n};\n\n// --- Generate Response ---\n\nlet responseText = '';\nlet escalationRequired = false;\n\nif (intent === 'DELIVERY') {\n  // Delivery inquiry response\n  if (language === 'ar') {\n    responseText = 'بخصوص التوصيل:\\n\\n';\n    responseText += `• ${deliveryInfo.cairo_giza.ar}\\n`;\n    responseText += `• ${deliveryInfo.alexandria.ar}\\n`;\n    responseText += `• ${deliveryInfo.other.ar}\\n\\n`;\n    responseText += `${deliveryInfo.free_threshold.ar}\\n\\n`;\n    responseText += 'إنت فين بالظبط علشان أقولك المدة المتوقعة؟';\n  } else {\n    responseText = 'Regarding delivery:\\n\\n';\n    responseText += `• ${deliveryInfo.cairo_giza.en}\\n`;\n    responseText += `• ${deliveryInfo.alexandria.en}\\n`;\n    responseText += `• ${deliveryInfo.other.en}\\n\\n`;\n    responseText += `${deliveryInfo.free_threshold.en}\\n\\n`;\n    responseText += 'Where are you located so I can give you the expected timeframe?';\n  }\n} else if (message.includes(language === 'ar' ? 'فرع' : 'branch') || \n           message.includes(language === 'ar' ? 'عنوان' : 'address')) {\n  // Store location inquiry\n  responseText = storeInfo[language];\n} else if (message.includes(language === 'ar' ? 'مواعيد' : 'hours') ||\n           message.includes(language === 'ar' ? 'ساعات' : 'time')) {\n  // Working hours inquiry\n  if (language === 'ar') {\n    responseText = 'مواعيد العمل:\\n• أيام الأسبوع: من 9 الصبح لـ 9 بالليل\\n• الجمعة والسبت: من 10 الصبح لـ 6 بالليل\\n\\nمحتاج حاجة تانية؟';\n  } else {\n    responseText = 'Working hours:\\n• Weekdays: 9 AM to 9 PM\\n• Friday & Saturday: 10 AM to 6 PM\\n\\nAnything else I can help with?';\n  }\n} else {\n  // Default support response\n  if (language === 'ar') {\n    responseText = 'أهلاً! أنا هنا أساعدك. ممكن أفيدك في:\\n• معلومات عن التوصيل\\n• فروعنا ومواعيد العمل\\n• أي استفسار عام\\n\\nاتفضل اسألني!';\n  } else {\n    responseText = 'Hello! I\\'m here to help. I can assist you with:\\n• Delivery information\\n• Branch locations and working hours\\n• General inquiries\\n\\nPlease go ahead!';\n  }\n}\n\n// --- Check for Complex Issues (may require escalation) ---\n\nconst complexKeywords = language === 'ar'\n  ? ['تأخير', 'متأخر', 'فين الطلب', 'مش واصل']\n  : ['delayed', 'late', 'where is my order', 'not arrived'];\n\nfor (const kw of complexKeywords) {\n  if (message.includes(kw)) {\n    escalationRequired = true;\n    break;\n  }\n}\n\n// --- Build Output ---\n\nconst output = {\n  ...input,\n  agent_used: 'support',\n  response_type: 'text',\n  content: {\n    text: responseText,\n    product: null\n  },\n  escalation_required: escalationRequired,\n  actions_taken: ['ANSWER_FAQ', 'FETCH_DELIVERY_INFO']\n};\n\nreturn { json: output };"
+      },
+      "id": "execute_support",
+      "name": "Execute_Support_Agent",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1050, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// EXECUTE WARRANTY AGENT\n// Purpose: Explain warranty policies, guide activation, collect claim details\n// NEVER approve or reject warranty claims\n// ============================================\n\nconst input = $input.first().json;\nconst language = input.language || 'ar';\nconst message = input.normalized_message || '';\n\n// --- Warranty Agent Configuration ---\n\nconst tone = {\n  ar: 'Egyptian Arabic, professional and understanding',\n  en: 'Professional, empathetic, informative'\n};\n\n// --- PLACEHOLDER: Database Queries ---\n// In production, fetch from PostgreSQL:\n// - warranty_policies table\n// - product_warranty_terms table\n\nconst warrantyPolicy = {\n  standard: {\n    duration_years: 10,\n    covers_ar: 'عيوب الصناعة، تهالك السوست، انخفاض المرتبة أكتر من 3 سم',\n    covers_en: 'Manufacturing defects, spring deterioration, sagging more than 3cm',\n    excludes_ar: 'سوء الاستخدام، البقع، الحرق، التلف المتعمد',\n    excludes_en: 'Misuse, stains, burns, intentional damage'\n  }\n};\n\n// --- Generate Response ---\n\nlet responseText = '';\nlet escalationRequired = false;\n\n// Check if this is a claim request\nconst claimKeywords = language === 'ar'\n  ? ['عايز اقدم', 'طلب ضمان', 'استبدال', 'تغيير']\n  : ['file claim', 'warranty claim', 'replace', 'exchange'];\n\nconst isClaimRequest = claimKeywords.some(kw => message.includes(kw));\n\nif (isClaimRequest) {\n  // Warranty claim - collect details then escalate\n  if (language === 'ar') {\n    responseText = 'تمام، هساعدك في موضوع الضمان. علشان نقدر نفتحلك طلب، هحتاج منك:\\n\\n';\n    responseText += '1. رقم الفاتورة\\n';\n    responseText += '2. تاريخ الشراء\\n';\n    responseText += '3. وصف المشكلة\\n\\n';\n    responseText += 'لو معاك البيانات دي، ابعتهالي وهحولك لقسم الضمان.';\n  } else {\n    responseText = 'Sure, I\\'ll help you with the warranty. To file a claim, I\\'ll need:\\n\\n';\n    responseText += '1. Invoice number\\n';\n    responseText += '2. Purchase date\\n';\n    responseText += '3. Description of the issue\\n\\n';\n    responseText += 'If you have this information, please share it and I\\'ll connect you with our warranty department.';\n  }\n  // Claims always escalate after collecting details\n  escalationRequired = true;\n  \n} else if (message.includes(language === 'ar' ? 'بيغطي' : 'cover') ||\n           message.includes(language === 'ar' ? 'شامل' : 'include')) {\n  // What does warranty cover\n  if (language === 'ar') {\n    responseText = `ضمان يانسن ${warrantyPolicy.standard.duration_years} سنين بيغطي:\\n\\n`;\n    responseText += `✅ ${warrantyPolicy.standard.covers_ar}\\n\\n`;\n    responseText += `❌ الضمان مش بيشمل: ${warrantyPolicy.standard.excludes_ar}\\n\\n`;\n    responseText += 'عندك سؤال تاني عن الضمان؟';\n  } else {\n    responseText = `Janssen ${warrantyPolicy.standard.duration_years}-year warranty covers:\\n\\n`;\n    responseText += `✅ ${warrantyPolicy.standard.covers_en}\\n\\n`;\n    responseText += `❌ Warranty excludes: ${warrantyPolicy.standard.excludes_en}\\n\\n`;\n    responseText += 'Do you have any other warranty questions?';\n  }\n  \n} else if (message.includes(language === 'ar' ? 'تفعيل' : 'activate')) {\n  // Warranty activation\n  if (language === 'ar') {\n    responseText = 'لتفعيل الضمان:\\n\\n';\n    responseText += '1. احتفظ بالفاتورة الأصلية\\n';\n    responseText += '2. سجل المنتج خلال 30 يوم من الشراء\\n';\n    responseText += '3. تواصل معانا لو حصلت أي مشكلة\\n\\n';\n    responseText += 'الضمان بيبدأ من تاريخ الفاتورة تلقائياً.';\n  } else {\n    responseText = 'To activate warranty:\\n\\n';\n    responseText += '1. Keep your original invoice\\n';\n    responseText += '2. Register product within 30 days of purchase\\n';\n    responseText += '3. Contact us if any issues arise\\n\\n';\n    responseText += 'Warranty starts automatically from the invoice date.';\n  }\n  \n} else {\n  // Default warranty response\n  if (language === 'ar') {\n    responseText = `أهلاً! الضمان بتاع يانسن ${warrantyPolicy.standard.duration_years} سنين وبيغطي عيوب الصناعة.\\n\\n`;\n    responseText += 'عايز تعرف إيه اللي الضمان بيغطيه، ولا عايز تفعل الضمان، ولا عندك مشكلة في المنتج؟';\n  } else {\n    responseText = `Hello! Janssen warranty is ${warrantyPolicy.standard.duration_years} years and covers manufacturing defects.\\n\\n`;\n    responseText += 'Would you like to know what\\'s covered, how to activate warranty, or do you have an issue with your product?';\n  }\n}\n\n// --- Build Output ---\n\nconst output = {\n  ...input,\n  agent_used: 'warranty',\n  response_type: 'text',\n  content: {\n    text: responseText,\n    product: null\n  },\n  escalation_required: escalationRequired,\n  actions_taken: ['FETCH_WARRANTY_POLICY', 'EXPLAIN_WARRANTY_TERMS']\n};\n\nreturn { json: output };"
+      },
+      "id": "execute_warranty",
+      "name": "Execute_Warranty_Agent",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1050, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// EXECUTE COMPLAINT AGENT\n// Purpose: Handle complaints with empathy, de-escalate, collect details\n// NEVER dismiss, argue, or promise refunds\n// ALL complaints eventually escalate to human\n// ============================================\n\nconst input = $input.first().json;\nconst language = input.language || 'ar';\nconst message = input.normalized_message || '';\nconst conversationTurn = input.metadata?.conversation_turn || 1;\n\n// --- Complaint Agent Configuration ---\n\nconst tone = {\n  ar: 'Egyptian Arabic, deeply empathetic, apologetic',\n  en: 'Empathetic, apologetic, patient'\n};\n\n// --- De-escalation Phrases ---\n\nconst empathyPhrases = {\n  ar: [\n    'معلش جداً على اللي حصل',\n    'فاهم زعلك وحقك عليا تماماً',\n    'أنا هنا علشان أساعدك',\n    'رأيك مهم جداً لينا'\n  ],\n  en: [\n    'I\\'m truly sorry about what happened',\n    'I completely understand your frustration',\n    'I\\'m here to help you',\n    'Your feedback is very important to us'\n  ]\n};\n\n// --- Generate Response ---\n\nlet responseText = '';\n\n// First turn: Acknowledge with empathy\nif (conversationTurn <= 2) {\n  if (language === 'ar') {\n    responseText = `${empathyPhrases.ar[0]}. ${empathyPhrases.ar[1]}.\\n\\n`;\n    responseText += 'علشان أقدر أساعدك، ممكن تقولي:\\n';\n    responseText += '1. إيه اللي حصل بالظبط؟\\n';\n    responseText += '2. امتى ده حصل؟\\n';\n    responseText += '3. رقم الفاتورة لو معاك؟\\n\\n';\n    responseText += 'كل المعلومات دي هتساعدني أحل الموضوع معاك.';\n  } else {\n    responseText = `${empathyPhrases.en[0]}. ${empathyPhrases.en[1]}.\\n\\n`;\n    responseText += 'To help you better, could you tell me:\\n';\n    responseText += '1. What exactly happened?\\n';\n    responseText += '2. When did this occur?\\n';\n    responseText += '3. Your invoice number if available?\\n\\n';\n    responseText += 'This information will help me resolve this for you.';\n  }\n} else {\n  // Subsequent turns: Acknowledge and prepare for escalation\n  if (language === 'ar') {\n    responseText = 'شكراً إنك قولتلي التفاصيل دي. ';\n    responseText += empathyPhrases.ar[3] + '.\\n\\n';\n    responseText += 'علشان نحل الموضوع ده بأسرع شكل، هحولك لمسؤول يقدر يساعدك أكتر.';\n  } else {\n    responseText = 'Thank you for sharing these details. ';\n    responseText += empathyPhrases.en[3] + '.\\n\\n';\n    responseText += 'To resolve this as quickly as possible, I\\'ll connect you with a manager who can help further.';\n  }\n}\n\n// --- Complaints ALWAYS escalate (after empathy and detail collection) ---\n\nconst escalationRequired = true;\n\n// --- Build Output ---\n\nconst output = {\n  ...input,\n  agent_used: 'complaint',\n  response_type: 'text',\n  content: {\n    text: responseText,\n    product: null\n  },\n  escalation_required: escalationRequired,\n  actions_taken: ['ACKNOWLEDGE_COMPLAINT', 'VALIDATE_FEELINGS', 'COLLECT_COMPLAINT_DETAILS']\n};\n\nreturn { json: output };"
+      },
+      "id": "execute_complaint",
+      "name": "Execute_Complaint_Agent",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1050, 700]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// EXECUTE ESCALATION AGENT\n// Purpose: Prepare handover to human agent\n// TERMINAL - No further AI processing after this\n// ============================================\n\nconst input = $input.first().json;\nconst language = input.language || 'ar';\n\n// --- Escalation Messages ---\n\nconst escalationMessages = {\n  ar: 'هحولك دلوقتي لأحد موظفين خدمة العملاء اللي هيقدر يساعدك أكتر. استنى لحظة من فضلك.',\n  en: 'I\\'m connecting you now to one of our customer service representatives who can help you further. Please hold.'\n};\n\n// --- Determine Queue ---\n\nlet targetQueue = 'support_queue';\nlet priority = 'normal';\n\nconst previousAgent = input.agent_used;\nconst escalationReason = input.escalation_reason;\n\nif (escalationReason === 'legal_threat' || escalationReason === 'media_threat') {\n  targetQueue = 'priority_queue';\n  priority = 'critical';\n} else if (previousAgent === 'complaint' || input.intent?.detected === 'COMPLAINT') {\n  targetQueue = 'complaints_queue';\n  priority = 'high';\n} else if (previousAgent === 'warranty') {\n  targetQueue = 'warranty_queue';\n  priority = 'high';\n} else if (previousAgent === 'sales') {\n  targetQueue = 'sales_queue';\n  priority = 'medium';\n}\n\n// --- Generate Conversation Summary ---\n\nconst conversationSummary = {\n  session_id: input.session_id,\n  customer_phone: input.metadata?.phone || 'unknown',\n  customer_name: input.metadata?.name || 'unknown',\n  channel: input.channel,\n  language: language,\n  conversation_turns: input.metadata?.conversation_turn || 1,\n  intent_detected: input.intent?.detected || 'HUMAN_REQUEST',\n  previous_agent: previousAgent || 'none',\n  escalation_reason: escalationReason || 'customer_request',\n  customer_sentiment: input.metadata?.customer_sentiment || 'neutral',\n  last_message: input.user_message\n};\n\n// --- Build Output ---\n\nconst output = {\n  ...input,\n  agent_used: 'escalation',\n  response_type: 'handover',\n  content: {\n    text: escalationMessages[language],\n    handover_message: escalationMessages[language],\n    queue: targetQueue,\n    priority: priority,\n    conversation_summary: conversationSummary\n  },\n  escalation_required: true,\n  is_terminal: true,\n  actions_taken: ['SUMMARIZE_CONVERSATION', 'ROUTE_TO_QUEUE', 'TRANSFER_TO_HUMAN']\n};\n\nreturn { json: output };"
+      },
+      "id": "execute_escalation",
+      "name": "Execute_Escalation_Agent",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1050, 900]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "escalation_check",
+              "leftValue": "={{ $json.escalation_required }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "check_escalation",
+      "name": "Check_Escalation",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1300, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// ESCALATION HANDLER\n// Purpose: Generate final handover response\n// TERMINAL - Ends AI processing\n// ============================================\n\nconst input = $input.first().json;\nconst language = input.language || 'ar';\n\n// --- Escalation Messages ---\n\nconst messages = {\n  ar: 'هحولك دلوقتي لأحد موظفين خدمة العملاء. استنى لحظة من فضلك. 🙏',\n  en: 'I\\'m connecting you to customer service now. Please hold. 🙏'\n};\n\n// Use existing content if escalation agent already ran\nconst handoverMessage = input.content?.handover_message || messages[language];\nconst queue = input.content?.queue || 'support_queue';\nconst priority = input.content?.priority || 'normal';\n\n// --- Build Conversation Summary for CRM ---\n\nconst summary = input.content?.conversation_summary || {\n  session_id: input.session_id,\n  channel: input.channel,\n  language: language,\n  intent: input.intent?.detected,\n  agent_used: input.agent_used,\n  escalation_reason: input.escalation_reason || 'escalation_required',\n  last_message: input.user_message\n};\n\n// --- Build Final Output ---\n\nconst output = {\n  session_id: input.session_id,\n  channel: input.channel,\n  language: language,\n  agent_used: input.agent_used || 'escalation',\n  response_type: 'handover',\n  content: {\n    text: handoverMessage,\n    handover_message: handoverMessage,\n    queue: queue,\n    priority: priority\n  },\n  next_action: 'transfer_to_human',\n  confidence_score: input.intent?.confidence || 1.0,\n  is_terminal: true,\n  crm_payload: {\n    event_type: 'ESCALATION',\n    summary: summary,\n    timestamp: new Date().toISOString()\n  }\n};\n\nreturn { json: output };"
+      },
+      "id": "escalation_handler",
+      "name": "Escalation_Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1500, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// RESPONSE FORMATTER\n// Purpose: Format response for specific channel\n// ============================================\n\nconst input = $input.first().json;\nconst channel = input.channel || 'chat';\nconst language = input.language || 'ar';\n\nlet formattedContent = { ...input.content };\nlet responseText = input.content?.text || '';\n\n// --- Channel-Specific Formatting ---\n\nif (channel === 'voice') {\n  // Voice: Short text, no emojis, SSML-ready\n  responseText = responseText\n    .replace(/[\\u{1F600}-\\u{1F64F}]/gu, '') // Remove emojis\n    .replace(/[\\u{1F300}-\\u{1F5FF}]/gu, '')\n    .replace(/[\\u{1F680}-\\u{1F6FF}]/gu, '')\n    .replace(/[\\u{2600}-\\u{26FF}]/gu, '')\n    .replace(/[\\u{2700}-\\u{27BF}]/gu, '')\n    .replace(/\\n+/g, '. ') // Replace newlines with periods\n    .replace(/•/g, ',') // Replace bullets\n    .replace(/✅/g, '')\n    .replace(/❌/g, '')\n    .trim();\n  \n  // Truncate for voice\n  if (responseText.length > 200) {\n    responseText = responseText.substring(0, 197) + '...';\n  }\n  \n  formattedContent = {\n    text: responseText,\n    ssml: `<speak>${responseText}</speak>`\n  };\n  \n} else if (channel === 'whatsapp') {\n  // WhatsApp: Template-ready format\n  formattedContent = {\n    text: responseText,\n    template_ready: true,\n    interactive: input.response_type === 'product_card' ? {\n      type: 'product',\n      body: responseText,\n      product: input.content?.product\n    } : null\n  };\n  \n} else {\n  // Chat: Rich format with HTML support\n  formattedContent = {\n    text: responseText,\n    html: responseText.replace(/\\n/g, '<br>'),\n    product_card: input.content?.product || null\n  };\n}\n\n// --- Build Final Output ---\n\nconst output = {\n  session_id: input.session_id,\n  channel: channel,\n  language: language,\n  response_type: input.response_type || 'text',\n  content: formattedContent,\n  next_action: 'await_response',\n  agent_used: input.agent_used,\n  confidence_score: input.intent?.confidence || 0.5,\n  metadata: {\n    intent_detected: input.intent?.detected,\n    actions_taken: input.actions_taken,\n    timestamp: new Date().toISOString()\n  }\n};\n\nreturn { json: output };"
+      },
+      "id": "format_response",
+      "name": "Format_Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1500, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// MERGE RESPONSES\n// Purpose: Combine all agent outputs for logging\n// ============================================\n\nconst input = $input.first().json;\n\n// Pass through - responses are already formatted\nreturn { json: input };"
+      },
+      "id": "merge_responses",
+      "name": "Merge_Responses",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1700, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// LOG INTERACTION\n// Purpose: Prepare log entry for database and CRM\n// PLACEHOLDER: Add actual database insert\n// ============================================\n\nconst input = $input.first().json;\n\n// --- Build Log Entry ---\n\nconst logEntry = {\n  // For agents_log table\n  database_log: {\n    session_id: input.session_id,\n    agent_name: input.agent_used,\n    action_type: 'MESSAGE_PROCESSED',\n    intent_received: input.metadata?.intent_detected || input.intent?.detected,\n    input_text: input.user_message,\n    output_text: input.content?.text,\n    response_time_ms: Date.now() - new Date(input.timestamp || Date.now()).getTime(),\n    success: true,\n    escalated: input.response_type === 'handover',\n    created_at: new Date().toISOString()\n  },\n  \n  // For CRM sync\n  crm_event: {\n    event_type: input.response_type === 'handover' ? 'ESCALATION' : 'AI_DECISION',\n    session_id: input.session_id,\n    agent_used: input.agent_used,\n    timestamp: new Date().toISOString()\n  }\n};\n\n// --- PLACEHOLDER: Database Insert ---\n// In production, insert to PostgreSQL agents_log table\n// await $db.insert('agents_log', logEntry.database_log);\n\n// --- PLACEHOLDER: CRM Sync ---\n// In production, send to CRM webhook\n// await $http.post(CRM_WEBHOOK_URL, logEntry.crm_event);\n\n// --- Pass Through Response ---\n\nconst output = {\n  ...input,\n  logged: true,\n  log_entry: logEntry\n};\n\nreturn { json: output };"
+      },
+      "id": "log_interaction",
+      "name": "Log_Interaction",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1900, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ response_type: $json.response_type, content: $json.content, next_action: $json.next_action || 'await_response', agent_used: $json.agent_used, confidence_score: $json.confidence_score || 0.5, session_id: $json.session_id }) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond_webhook",
+      "name": "Respond_Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2100, 400]
+    }
+  ],
+  "connections": {
+    "Webhook_Entry": {
+      "main": [
+        [
+          {
+            "node": "Normalize_Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize_Input": {
+      "main": [
+        [
+          {
+            "node": "Detect_Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Detect_Intent": {
+      "main": [
+        [
+          {
+            "node": "Agent_Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agent_Router": {
+      "main": [
+        [
+          {
+            "node": "Execute_Sales_Agent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Execute_Support_Agent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Execute_Warranty_Agent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Execute_Complaint_Agent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Execute_Escalation_Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute_Sales_Agent": {
+      "main": [
+        [
+          {
+            "node": "Check_Escalation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute_Support_Agent": {
+      "main": [
+        [
+          {
+            "node": "Check_Escalation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute_Warranty_Agent": {
+      "main": [
+        [
+          {
+            "node": "Check_Escalation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute_Complaint_Agent": {
+      "main": [
+        [
+          {
+            "node": "Check_Escalation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute_Escalation_Agent": {
+      "main": [
+        [
+          {
+            "node": "Escalation_Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check_Escalation": {
+      "main": [
+        [
+          {
+            "node": "Escalation_Handler",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format_Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Escalation_Handler": {
+      "main": [
+        [
+          {
+            "node": "Merge_Responses",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format_Response": {
+      "main": [
+        [
+          {
+            "node": "Merge_Responses",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge_Responses": {
+      "main": [
+        [
+          {
+            "node": "Log_Interaction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log_Interaction": {
+      "main": [
+        [
+          {
+            "node": "Respond_Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "janssen-ai"
+    },
+    {
+      "name": "production"
+    },
+    {
+      "name": "unified-flow"
+    }
+  ],
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "janssen-ai-production",
+    "version": "1.0.0",
+    "description": "Unified Janssen AI workflow. Ensure response_type and content match widget (text, handover, product_card)."
+  },
+  "pinData": {}
+}

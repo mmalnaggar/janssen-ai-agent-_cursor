@@ -1,0 +1,167 @@
+{
+  "flow_name": "Janssen_Voice_Agent_Flow",
+  "platform": "Avaya IP Office R11",
+  "version": "1.0.0",
+  "status": "blueprint",
+  "default_language": "ar",
+  "supported_languages": ["ar", "en"],
+  "description": "Voice AI flow for Janssen customer service. Handles incoming calls in Arabic, processes speech through AI, and routes to human agents when needed.",
+  "notes": [
+    "This is a BLUEPRINT document - not directly executable",
+    "Configure Avaya IP Office settings before deployment",
+    "Integrate with n8n workflow for AI processing",
+    "Arabic (Egyptian dialect) is the primary language"
+  ],
+  "flow_steps": [
+    {
+      "step_order": 1,
+      "name": "Incoming_Call",
+      "type": "call_entry",
+      "purpose": "Entry point for all incoming voice calls to Janssen customer service line.",
+      "input": {
+        "caller_id": "Customer phone number (MSISDN)",
+        "called_number": "Janssen service line number",
+        "call_timestamp": "ISO 8601 timestamp"
+      },
+      "output": {
+        "session_id": "Unique call session identifier",
+        "caller_phone": "Normalized phone number",
+        "language_preference": "ar (default)"
+      },
+      "avaya_config": {
+        "hunt_group": "JANSSEN_AI_HG",
+        "queue_priority": "normal",
+        "max_wait_time_seconds": 30
+      },
+      "next_step": "Arabic_IVR_Menu"
+    },
+    {
+      "step_order": 2,
+      "name": "Arabic_IVR_Menu",
+      "type": "ivr_menu",
+      "purpose": "Plays Arabic welcome message and presents menu options.",
+      "prompts": {
+        "welcome_ar": "أهلاً بيك في يانسن. للمبيعات اضغط 1، للدعم الفني اضغط 2، أو اتكلم مباشرة مع المساعد الذكي.",
+        "welcome_en": "Welcome to Janssen. Press 1 for sales, 2 for support, or speak directly to our AI assistant."
+      },
+      "menu_options": {
+        "1": { "label": "Sales", "next_step": "Speech_To_Text_AR" },
+        "2": { "label": "Support", "next_step": "Speech_To_Text_AR" },
+        "0": { "label": "Human Agent", "next_step": "Human_Agent_Transfer" },
+        "voice": { "label": "AI Assistant", "next_step": "Speech_To_Text_AR" }
+      },
+      "timeout_seconds": 10,
+      "next_step": "Speech_To_Text_AR"
+    },
+    {
+      "step_order": 3,
+      "name": "Speech_To_Text_AR",
+      "type": "speech_recognition",
+      "purpose": "Converts Arabic speech to text using ASR.",
+      "input": {
+        "audio_stream": "Real-time audio from caller",
+        "language_code": "ar-EG"
+      },
+      "output": {
+        "transcribed_text": "Arabic text from speech",
+        "confidence_score": "0.0 to 1.0"
+      },
+      "asr_config": {
+        "provider": "PLACEHOLDER_ASR_PROVIDER",
+        "model": "ar-EG-telephony",
+        "sample_rate": 8000,
+        "speech_timeout_ms": 3000
+      },
+      "custom_vocabulary": [
+        "يانسن", "مرتبة", "سوست", "فوم", "ميموري فوم", "اورثوبيديك"
+      ],
+      "next_step": "Process_With_AI"
+    },
+    {
+      "step_order": 4,
+      "name": "Process_With_AI",
+      "type": "ai_processing",
+      "purpose": "Send transcribed text to AI backend for intent detection and response.",
+      "input": {
+        "session_id": "Call session ID",
+        "transcribed_text": "From Speech_To_Text_AR",
+        "channel": "voice"
+      },
+      "output": {
+        "ai_response_text": "Generated response in Arabic",
+        "intent_detected": "Detected customer intent",
+        "agent_used": "sales | support | escalation",
+        "escalation_required": "Boolean"
+      },
+      "backend_integration": {
+        "endpoint": "PLACEHOLDER_BACKEND_URL/api/voice/message",
+        "timeout_ms": 10000
+      },
+      "next_step": "Decision_Node"
+    },
+    {
+      "step_order": 5,
+      "name": "Decision_Node",
+      "type": "routing_decision",
+      "purpose": "Evaluate AI response to determine next action.",
+      "decision_rules": [
+        { "condition": "escalation_required == true", "next_step": "Human_Agent_Transfer" },
+        { "condition": "intent == 'HUMAN_REQUEST'", "next_step": "Human_Agent_Transfer" },
+        { "condition": "call_duration > 300", "next_step": "Human_Agent_Transfer" },
+        { "condition": "default", "next_step": "Text_To_Speech_AR" }
+      ],
+      "next_step": "Text_To_Speech_AR"
+    },
+    {
+      "step_order": 6,
+      "name": "Text_To_Speech_AR",
+      "type": "speech_synthesis",
+      "purpose": "Converts AI response to Egyptian Arabic speech.",
+      "input": {
+        "response_text": "Arabic text from AI"
+      },
+      "output": {
+        "audio_stream": "Generated speech audio"
+      },
+      "tts_config": {
+        "provider": "PLACEHOLDER_TTS_PROVIDER",
+        "voice_id": "ar-EG-female-telephony",
+        "speaking_rate": 1.0,
+        "sample_rate": 8000
+      },
+      "post_playback": {
+        "action": "listen_for_response",
+        "on_speech_detected": "Speech_To_Text_AR"
+      },
+      "next_step": "Speech_To_Text_AR"
+    },
+    {
+      "step_order": 7,
+      "name": "Human_Agent_Transfer",
+      "type": "agent_transfer",
+      "purpose": "Transfer call to human agent when AI cannot resolve.",
+      "pre_transfer_message": {
+        "ar": "هحولك دلوقتي لأحد موظفين خدمة العملاء. استنى لحظة من فضلك.",
+        "en": "Connecting you to customer service now. Please hold."
+      },
+      "transfer_config": {
+        "target_hunt_group": "JANSSEN_HUMAN_HG",
+        "skill_based_routing": true,
+        "preferred_skills": ["arabic", "customer_service"],
+        "max_queue_time_seconds": 120
+      },
+      "context_handover": {
+        "include": ["session_id", "conversation_summary", "intent_history", "caller_phone"]
+      },
+      "terminal": true
+    }
+  ],
+  "global_settings": {
+    "call_recording": { "enabled": true, "format": "wav" },
+    "business_hours": {
+      "timezone": "Africa/Cairo",
+      "weekdays": "09:00-21:00",
+      "weekends": "10:00-18:00"
+    }
+  }
+}

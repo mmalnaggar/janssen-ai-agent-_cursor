@@ -1,0 +1,277 @@
+{
+  "name": "Janssen_AI_Full_V2",
+  "nodes": [
+    {
+      "id": "webhook_in",
+      "name": "1_Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [100, 500],
+      "parameters": {
+        "path": "janssen-ai-incoming",
+        "httpMethod": "POST",
+        "responseMode": "responseNode"
+      }
+    },
+    {
+      "id": "normalize",
+      "name": "2_Normalize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [350, 500],
+      "parameters": {
+        "jsCode": "const rawInput = $input.first().json;\nconst body = rawInput.body || rawInput;\n\nfunction containsArabic(text) {\n  return /[\\u0600-\\u06FF]/.test(text);\n}\n\nconst userMessage = (body.user_message || body.message || '').trim();\nconst sessionId = body.session_id || 'session_' + Date.now();\nconst channel = body.channel || 'chat';\n\nlet language = body.language;\nif (!language) language = containsArabic(userMessage) ? 'ar' : 'en';\n\nreturn {\n  json: {\n    user_message: userMessage,\n    session_id: sessionId,\n    channel: channel,\n    language: language,\n    timestamp: new Date().toISOString()\n  }\n};"
+      }
+    },
+    {
+      "id": "detect_intent",
+      "name": "3_Detect_Intent",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [600, 500],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst msg = input.user_message;\nconst lang = input.language;\n\nconst intents = [\n  { intent: 'LEGAL_THREAT', agent: 'escalation', ar: ['محامي', 'قانون', 'شرطة', 'هنشر', 'فيسبوك'], en: ['lawyer', 'legal', 'police', 'facebook'] },\n  { intent: 'COMPLAINT', agent: 'complaint', ar: ['شكوى', 'مشكلة', 'زعلان', 'مش راضي', 'استرجاع'], en: ['complaint', 'problem', 'angry', 'refund'] },\n  { intent: 'HUMAN_REQUEST', agent: 'escalation', ar: ['موظف', 'خدمة عملاء', 'مدير'], en: ['human', 'customer service', 'manager'] },\n  { intent: 'WARRANTY', agent: 'warranty', ar: ['ضمان', 'تصليح', 'صيانة'], en: ['warranty', 'repair', 'maintenance'] },\n  { intent: 'SALES_PRICE', agent: 'sales', ar: ['سعر', 'بكام', 'كام', 'عروض', 'خصم'], en: ['price', 'cost', 'how much', 'discount'] },\n  { intent: 'SALES_REC', agent: 'sales', ar: ['عايز اشتري', 'مرتبة', 'انصحني', 'افضل'], en: ['buy', 'mattress', 'recommend', 'best'] },\n  { intent: 'DELIVERY', agent: 'support', ar: ['توصيل', 'شحن', 'يوصل امتى'], en: ['delivery', 'shipping', 'arrive'] },\n  { intent: 'STORE_INFO', agent: 'support', ar: ['فرع', 'عنوان', 'مواعيد'], en: ['store', 'address', 'hours', 'branch'] }\n];\n\nlet detected = { intent: 'GENERAL', agent: 'support', confidence: 0.5, matched: [] };\n\nfor (const def of intents) {\n  const keywords = lang === 'ar' ? def.ar : def.en;\n  const matches = keywords.filter(k => msg.includes(k));\n  if (matches.length > 0) {\n    detected = { intent: def.intent, agent: def.agent, confidence: 0.8, matched: matches };\n    break;\n  }\n}\n\nreturn { json: { ...input, ...detected } };"
+      }
+    },
+    {
+      "id": "router",
+      "name": "4_Router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [850, 500],
+      "parameters": {
+        "rules": {
+          "values": [
+            { "outputKey": "sales", "conditions": { "options": { "version": 2 }, "combinator": "and", "conditions": [{ "leftValue": "={{ $json.agent }}", "rightValue": "sales", "operator": { "type": "string", "operation": "equals" } }] } },
+            { "outputKey": "support", "conditions": { "options": { "version": 2 }, "combinator": "and", "conditions": [{ "leftValue": "={{ $json.agent }}", "rightValue": "support", "operator": { "type": "string", "operation": "equals" } }] } },
+            { "outputKey": "warranty", "conditions": { "options": { "version": 2 }, "combinator": "and", "conditions": [{ "leftValue": "={{ $json.agent }}", "rightValue": "warranty", "operator": { "type": "string", "operation": "equals" } }] } },
+            { "outputKey": "complaint", "conditions": { "options": { "version": 2 }, "combinator": "and", "conditions": [{ "leftValue": "={{ $json.agent }}", "rightValue": "complaint", "operator": { "type": "string", "operation": "equals" } }] } },
+            { "outputKey": "escalation", "conditions": { "options": { "version": 2 }, "combinator": "and", "conditions": [{ "leftValue": "={{ $json.agent }}", "rightValue": "escalation", "operator": { "type": "string", "operation": "equals" } }] } }
+          ]
+        },
+        "options": { "fallbackOutput": "extra" }
+      }
+    },
+    {
+      "id": "agent_sales",
+      "name": "5A_Sales",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1150, 100],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst lang = input.language;\n\nconst products = [\n  { name_ar: 'يانسن أورثوبيديك', name_en: 'Janssen Orthopedic', price: 12500, warranty: 10 },\n  { name_ar: 'يانسن ميموري فوم', name_en: 'Janssen Memory Foam', price: 15000, warranty: 12 },\n  { name_ar: 'يانسن سوبر سوفت', name_en: 'Janssen Super Soft', price: 10000, warranty: 8 }\n];\n\nlet text = '';\nif (input.intent === 'SALES_PRICE') {\n  text = lang === 'ar'\n    ? `أسعار المراتب:\\n• ${products[0].name_ar}: ${products[0].price} جنيه\\n• ${products[1].name_ar}: ${products[1].price} جنيه\\n• ${products[2].name_ar}: ${products[2].price} جنيه`\n    : `Mattress prices:\\n• ${products[0].name_en}: ${products[0].price} EGP\\n• ${products[1].name_en}: ${products[1].price} EGP\\n• ${products[2].name_en}: ${products[2].price} EGP`;\n} else {\n  text = lang === 'ar' ? 'أهلاً! أنا هنا أساعدك تختار المرتبة. عايز تعرف الأسعار؟' : \"Hello! I'm here to help you choose. Want to know prices?\";\n}\n\nreturn { json: { ...input, response_text: text, response_type: 'text', escalated: false, next_action: 'await_response' } };"
+      }
+    },
+    {
+      "id": "agent_support",
+      "name": "5B_Support",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1150, 300],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst lang = input.language;\n\nlet text = '';\nif (input.intent === 'DELIVERY') {\n  text = lang === 'ar'\n    ? 'التوصيل:\\n• القاهرة: 2-3 أيام\\n• الإسكندرية: 3-5 أيام\\n• المحافظات: 5-7 أيام\\n\\nمجاني للطلبات فوق 5000 جنيه'\n    : 'Delivery:\\n• Cairo: 2-3 days\\n• Alexandria: 3-5 days\\n• Other: 5-7 days\\n\\nFree for orders above 5000 EGP';\n} else if (input.intent === 'STORE_INFO') {\n  text = lang === 'ar'\n    ? 'فروعنا:\\n• مدينة نصر: شارع عباس العقاد\\n• المهندسين: شارع جامعة الدول\\n\\nمن 9 صباحاً لـ 9 مساءً'\n    : 'Branches:\\n• Nasr City: Abbas El-Akkad St.\\n• Mohandessin: Arab League St.\\n\\n9 AM to 9 PM';\n} else {\n  text = lang === 'ar' ? 'أهلاً! إزاي أقدر أساعدك؟' : 'Hello! How can I help you?';\n}\n\nreturn { json: { ...input, response_text: text, response_type: 'text', escalated: false, next_action: 'await_response' } };"
+      }
+    },
+    {
+      "id": "agent_warranty",
+      "name": "5C_Warranty",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1150, 500],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst lang = input.language;\n\nconst text = lang === 'ar'\n  ? 'ضمان يانسن 10 سنين:\\n✅ عيوب الصناعة\\n✅ تهالك السوست\\n✅ انخفاض المرتبة > 3 سم\\n\\n❌ مش بيشمل: سوء الاستخدام، البقع'\n  : 'Janssen 10-year warranty:\\n✅ Manufacturing defects\\n✅ Spring deterioration\\n✅ Sagging > 3cm\\n\\n❌ Excludes: Misuse, stains';\n\nreturn { json: { ...input, response_text: text, response_type: 'text', escalated: false, next_action: 'await_response' } };"
+      }
+    },
+    {
+      "id": "agent_complaint",
+      "name": "5D_Complaint",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1150, 700],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst lang = input.language;\n\nconst text = lang === 'ar'\n  ? 'معلش جداً على اللي حصل. علشان أساعدك:\\n1. إيه اللي حصل؟\\n2. امتى؟\\n3. رقم الفاتورة؟\\n\\nهحولك لقسم الشكاوى.'\n  : \"I'm sorry about what happened. To help:\\n1. What happened?\\n2. When?\\n3. Invoice number?\\n\\nConnecting you to complaints.\";\n\nreturn { json: { ...input, response_text: text, response_type: 'handover', escalated: true, next_action: 'transfer_to_human', escalation_queue: 'complaints' } };"
+      }
+    },
+    {
+      "id": "agent_escalation",
+      "name": "5E_Escalation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1150, 900],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst lang = input.language;\n\nconst text = lang === 'ar'\n  ? 'هحولك دلوقتي لأحد موظفين خدمة العملاء. استنى لحظة.'\n  : \"Connecting you to a customer service representative. Please hold.\";\n\nconst priority = input.intent === 'LEGAL_THREAT' ? 'critical' : 'normal';\n\nreturn { json: { ...input, response_text: text, response_type: 'handover', escalated: true, next_action: 'transfer_to_human', escalation_queue: 'priority', escalation_priority: priority } };"
+      }
+    },
+    {
+      "id": "format_sales",
+      "name": "6A_Format_Sales",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1450, 100],
+      "parameters": {
+        "jsCode": "const i = $input.first().json;\nlet text = i.response_text;\nif (i.channel === 'chat') text = text.replace(/\\n/g, '<br>');\n\nreturn { json: {\n  response_type: i.response_type,\n  content: { text },\n  next_action: i.next_action,\n  agent_used: i.agent,\n  intent: i.intent,\n  confidence_score: i.confidence,\n  session_id: i.session_id,\n  language: i.language,\n  channel: i.channel,\n  matched_keywords: i.matched\n}};"
+      }
+    },
+    {
+      "id": "format_support",
+      "name": "6B_Format_Support",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1450, 300],
+      "parameters": {
+        "jsCode": "const i = $input.first().json;\nlet text = i.response_text;\nif (i.channel === 'chat') text = text.replace(/\\n/g, '<br>');\n\nreturn { json: {\n  response_type: i.response_type,\n  content: { text },\n  next_action: i.next_action,\n  agent_used: i.agent,\n  intent: i.intent,\n  confidence_score: i.confidence,\n  session_id: i.session_id,\n  language: i.language,\n  channel: i.channel,\n  matched_keywords: i.matched\n}};"
+      }
+    },
+    {
+      "id": "format_warranty",
+      "name": "6C_Format_Warranty",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1450, 500],
+      "parameters": {
+        "jsCode": "const i = $input.first().json;\nlet text = i.response_text;\nif (i.channel === 'chat') text = text.replace(/\\n/g, '<br>');\n\nreturn { json: {\n  response_type: i.response_type,\n  content: { text },\n  next_action: i.next_action,\n  agent_used: i.agent,\n  intent: i.intent,\n  confidence_score: i.confidence,\n  session_id: i.session_id,\n  language: i.language,\n  channel: i.channel,\n  matched_keywords: i.matched\n}};"
+      }
+    },
+    {
+      "id": "format_complaint",
+      "name": "6D_Format_Complaint",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1450, 700],
+      "parameters": {
+        "jsCode": "const i = $input.first().json;\nlet text = i.response_text;\nif (i.channel === 'chat') text = text.replace(/\\n/g, '<br>');\nconst content = { text, handover_message: text };\nreturn { json: {\n  response_type: i.response_type,\n  content,\n  next_action: i.next_action,\n  agent_used: i.agent,\n  intent: i.intent,\n  confidence_score: i.confidence,\n  session_id: i.session_id,\n  language: i.language,\n  channel: i.channel,\n  matched_keywords: i.matched,\n  escalation: { queue: i.escalation_queue, priority: 'high' }\n}};"
+      }
+    },
+    {
+      "id": "format_escalation",
+      "name": "6E_Format_Escalation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1450, 900],
+      "parameters": {
+        "jsCode": "const i = $input.first().json;\nlet text = i.response_text;\nif (i.channel === 'chat') text = text.replace(/\\n/g, '<br>');\nconst content = { text, handover_message: text };\nreturn { json: {\n  response_type: i.response_type,\n  content,\n  next_action: i.next_action,\n  agent_used: i.agent,\n  intent: i.intent,\n  confidence_score: i.confidence,\n  session_id: i.session_id,\n  language: i.language,\n  channel: i.channel,\n  matched_keywords: i.matched,\n  escalation: { queue: i.escalation_queue, priority: i.escalation_priority }\n}};"
+      }
+    },
+    {
+      "id": "respond_sales",
+      "name": "7A_Respond_Sales",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1750, 100],
+      "parameters": {
+        "respondWith": "allIncomingItems",
+        "options": { "responseCode": 200 }
+      }
+    },
+    {
+      "id": "respond_support",
+      "name": "7B_Respond_Support",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1750, 300],
+      "parameters": {
+        "respondWith": "allIncomingItems",
+        "options": { "responseCode": 200 }
+      }
+    },
+    {
+      "id": "respond_warranty",
+      "name": "7C_Respond_Warranty",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1750, 500],
+      "parameters": {
+        "respondWith": "allIncomingItems",
+        "options": { "responseCode": 200 }
+      }
+    },
+    {
+      "id": "respond_complaint",
+      "name": "7D_Respond_Complaint",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1750, 700],
+      "parameters": {
+        "respondWith": "allIncomingItems",
+        "options": { "responseCode": 200 }
+      }
+    },
+    {
+      "id": "respond_escalation",
+      "name": "7E_Respond_Escalation",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1750, 900],
+      "parameters": {
+        "respondWith": "allIncomingItems",
+        "options": { "responseCode": 200 }
+      }
+    },
+    {
+      "id": "respond_fallback",
+      "name": "7F_Respond_Fallback",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1150, 1100],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { response_type: 'text', content: { text: $json.language === 'ar' ? 'أهلاً! إزاي أقدر أساعدك؟' : 'Hello! How can I help?' }, next_action: 'await_response', agent_used: 'support', intent: 'GENERAL', confidence_score: 0.5, session_id: $json.session_id, language: $json.language, channel: $json.channel, matched_keywords: [] } }}",
+        "options": { "responseCode": 200 }
+      }
+    }
+  ],
+  "connections": {
+    "1_Webhook": {
+      "main": [[{ "node": "2_Normalize", "type": "main", "index": 0 }]]
+    },
+    "2_Normalize": {
+      "main": [[{ "node": "3_Detect_Intent", "type": "main", "index": 0 }]]
+    },
+    "3_Detect_Intent": {
+      "main": [[{ "node": "4_Router", "type": "main", "index": 0 }]]
+    },
+    "4_Router": {
+      "main": [
+        [{ "node": "5A_Sales", "type": "main", "index": 0 }],
+        [{ "node": "5B_Support", "type": "main", "index": 0 }],
+        [{ "node": "5C_Warranty", "type": "main", "index": 0 }],
+        [{ "node": "5D_Complaint", "type": "main", "index": 0 }],
+        [{ "node": "5E_Escalation", "type": "main", "index": 0 }],
+        [{ "node": "7F_Respond_Fallback", "type": "main", "index": 0 }]
+      ]
+    },
+    "5A_Sales": {
+      "main": [[{ "node": "6A_Format_Sales", "type": "main", "index": 0 }]]
+    },
+    "5B_Support": {
+      "main": [[{ "node": "6B_Format_Support", "type": "main", "index": 0 }]]
+    },
+    "5C_Warranty": {
+      "main": [[{ "node": "6C_Format_Warranty", "type": "main", "index": 0 }]]
+    },
+    "5D_Complaint": {
+      "main": [[{ "node": "6D_Format_Complaint", "type": "main", "index": 0 }]]
+    },
+    "5E_Escalation": {
+      "main": [[{ "node": "6E_Format_Escalation", "type": "main", "index": 0 }]]
+    },
+    "6A_Format_Sales": {
+      "main": [[{ "node": "7A_Respond_Sales", "type": "main", "index": 0 }]]
+    },
+    "6B_Format_Support": {
+      "main": [[{ "node": "7B_Respond_Support", "type": "main", "index": 0 }]]
+    },
+    "6C_Format_Warranty": {
+      "main": [[{ "node": "7C_Respond_Warranty", "type": "main", "index": 0 }]]
+    },
+    "6D_Format_Complaint": {
+      "main": [[{ "node": "7D_Respond_Complaint", "type": "main", "index": 0 }]]
+    },
+    "6E_Format_Escalation": {
+      "main": [[{ "node": "7E_Respond_Escalation", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "janssen-ai" }, { "name": "chat" }],
+  "meta": { "version": "2.0.0", "description": "Full multi-agent workflow for chat widget. Response schema: response_type (text|handover), content.text, content.handover_message for escalation." }
+}

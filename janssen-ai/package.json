@@ -1,0 +1,29 @@
+{
+  "name": "janssen-ai",
+  "version": "1.0.0",
+  "description": "Janssen AI Agent System - Customer service routing and support",
+  "main": "backend/app.js",
+  "scripts": {
+    "start": "node backend/app.js",
+    "dev": "nodemon backend/app.js",
+    "setup-db": "bash scripts/setup-db.sh"
+  },
+  "keywords": [
+    "janssen",
+    "ai",
+    "chatbot",
+    "customer-service"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "openai": "^6.17.0",
+    "pg": "^8.18.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  }
+}

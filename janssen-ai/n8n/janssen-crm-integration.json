@@ -1,0 +1,144 @@
+{
+  "name": "Janssen_CRM_Logger",
+  "nodes": [
+    {
+      "id": "webhook_in",
+      "name": "1_Log_Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [100, 400],
+      "parameters": {
+        "path": "janssen-log",
+        "httpMethod": "POST",
+        "responseMode": "onReceived",
+        "responseData": "allEntries"
+      }
+    },
+    {
+      "id": "parse_data",
+      "name": "2_Parse_Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [350, 400],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst body = input.body || input;\n\nreturn {\n  json: {\n    timestamp: new Date().toISOString(),\n    session_id: body.session_id || 'unknown',\n    phone: body.phone || '',\n    channel: body.channel || 'chat',\n    language: body.language || 'ar',\n    user_message: body.user_message || '',\n    bot_response: body.bot_response || '',\n    intent: body.intent || 'GENERAL',\n    agent_used: body.agent_used || 'support',\n    confidence: body.confidence_score || 0,\n    escalated: body.escalated || false,\n    customer_name: body.customer_name || '',\n    customer_email: body.customer_email || '',\n    page_url: body.metadata?.page || '',\n    customer_id: body.metadata?.customer_id || ''\n  }\n};"
+      }
+    },
+    {
+      "id": "google_sheets",
+      "name": "3_Save_To_Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [600, 300],
+      "parameters": {
+        "operation": "append",
+        "documentId": { "__rl": true, "mode": "id", "value": "YOUR_GOOGLE_SHEET_ID" },
+        "sheetName": { "__rl": true, "mode": "name", "value": "Conversations" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "timestamp": "={{ $json.timestamp }}",
+            "session_id": "={{ $json.session_id }}",
+            "phone": "={{ $json.phone }}",
+            "channel": "={{ $json.channel }}",
+            "language": "={{ $json.language }}",
+            "user_message": "={{ $json.user_message }}",
+            "bot_response": "={{ $json.bot_response }}",
+            "intent": "={{ $json.intent }}",
+            "agent_used": "={{ $json.agent_used }}",
+            "confidence": "={{ $json.confidence }}",
+            "escalated": "={{ $json.escalated }}",
+            "customer_name": "={{ $json.customer_name }}",
+            "customer_email": "={{ $json.customer_email }}"
+          }
+        }
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE_WITH_YOUR_GOOGLE_CREDENTIAL_ID",
+          "name": "Google Sheets"
+        }
+      }
+    },
+    {
+      "id": "check_escalation",
+      "name": "4_Check_Escalation",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [600, 500],
+      "parameters": {
+        "conditions": {
+          "options": { "version": 2 },
+          "combinator": "and",
+          "conditions": [
+            { "leftValue": "={{ $json.escalated }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "send_email",
+      "name": "5_Alert_Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [850, 400],
+      "parameters": {
+        "fromEmail": "ai@janssen.com",
+        "toEmail": "support@janssen.com",
+        "subject": "🚨 Escalation Alert - {{ $json.intent }}",
+        "emailType": "html",
+        "html": "<h2>Customer Escalation Alert</h2>\n<p><strong>Time:</strong> {{ $json.timestamp }}</p>\n<p><strong>Session:</strong> {{ $json.session_id }}</p>\n<p><strong>Phone:</strong> {{ $json.phone }}</p>\n<p><strong>Channel:</strong> {{ $json.channel }}</p>\n<hr>\n<p><strong>Customer Message:</strong></p>\n<blockquote>{{ $json.user_message }}</blockquote>\n<p><strong>Bot Response:</strong></p>\n<blockquote>{{ $json.bot_response }}</blockquote>\n<hr>\n<p><strong>Intent:</strong> {{ $json.intent }}</p>\n<p><strong>Agent:</strong> {{ $json.agent_used }}</p>"
+      },
+      "credentials": {
+        "smtp": {
+          "id": "REPLACE_WITH_YOUR_SMTP_CREDENTIAL_ID",
+          "name": "SMTP"
+        }
+      }
+    },
+    {
+      "id": "slack_alert",
+      "name": "5_Slack_Alert",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [850, 550],
+      "parameters": {
+        "resource": "message",
+        "operation": "post",
+        "channel": { "__rl": true, "mode": "name", "value": "#customer-support" },
+        "text": "🚨 *Escalation Alert*\n\n*Intent:* {{ $json.intent }}\n*Channel:* {{ $json.channel }}\n*Phone:* {{ $json.phone }}\n\n*Customer:*\n> {{ $json.user_message }}\n\n*Bot Response:*\n> {{ $json.bot_response }}"
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "REPLACE_WITH_YOUR_SLACK_CREDENTIAL_ID",
+          "name": "Slack"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "1_Log_Webhook": {
+      "main": [[{ "node": "2_Parse_Data", "type": "main", "index": 0 }]]
+    },
+    "2_Parse_Data": {
+      "main": [
+        [
+          { "node": "3_Save_To_Sheets", "type": "main", "index": 0 },
+          { "node": "4_Check_Escalation", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "4_Check_Escalation": {
+      "main": [
+        [
+          { "node": "5_Alert_Email", "type": "main", "index": 0 },
+          { "node": "5_Slack_Alert", "type": "main", "index": 0 }
+        ],
+        []
+      ]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "janssen-ai" }, { "name": "crm" }],
+  "meta": { "version": "1.0.0", "description": "POST /webhook/janssen-log – log conversations to Sheets; optional email/Slack on escalation." }
+}

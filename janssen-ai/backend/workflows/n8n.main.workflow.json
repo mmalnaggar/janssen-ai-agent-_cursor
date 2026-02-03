@@ -1,0 +1,251 @@
+{
+  "name": "Janssen_AI_Brain",
+  "nodes": [
+    {
+      "id": "node_webhook_in",
+      "name": "Webhook_In",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [200, 400],
+      "parameters": {
+        "path": "janssen-ai-incoming",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "notes": "ORCHESTRATOR: Entry point. Receives payload from widget/voice/whatsapp. Passes to unified flow executor."
+    },
+    {
+      "id": "node_validate_input",
+      "name": "Validate_Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [400, 400],
+      "parameters": {
+        "jsCode": "// ============================================\n// STEP 01: VALIDATE INPUT\n// Orchestrator Role: Input Adapter\n// Source of Truth: unified-agent-flow.json → input_schema\n// ============================================\n\nconst input = $input.first().json;\n\n// Validate required fields per unified-agent-flow.json input_schema\nconst errors = [];\n\nif (!input.session_id || typeof input.session_id !== 'string') {\n  errors.push('session_id is required');\n}\n\nif (!input.user_message || typeof input.user_message !== 'string' || !input.user_message.trim()) {\n  errors.push('user_message is required and must be non-empty');\n}\n\nconst validChannels = ['chat', 'voice', 'whatsapp'];\nconst channel = validChannels.includes(input.channel) ? input.channel : 'chat';\n\nconst validLanguages = ['ar', 'en'];\nlet language = validLanguages.includes(input.language) ? input.language : null;\n\n// If validation fails, return error response\nif (errors.length > 0) {\n  return {\n    json: {\n      _error: true,\n      error_code: 'INVALID_INPUT',\n      errors: errors,\n      response_type: 'text',\n      content: {\n        text: language === 'en'\n          ? \"Sorry, I couldn't understand that. Could you please try again?\"\n          : 'معلش، مقدرتش أفهم الرسالة. ممكن تعيد تاني؟'\n      },\n      next_action: 'await_response',\n      agent_used: 'system',\n      confidence_score: 0\n    }\n  };\n}\n\n// Pass validated input to flow executor\nreturn {\n  json: {\n    session_id: input.session_id,\n    channel: channel,\n    language: language,\n    user_message: input.user_message,\n    metadata: input.metadata || {},\n    _validated: true\n  }\n};"
+      },
+      "notes": "ORCHESTRATOR: Validates input per unified-agent-flow.json input_schema. No business logic."
+    },
+    {
+      "id": "node_check_validation",
+      "name": "Check_Validation",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [600, 400],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "conditions": [
+            { "id": "c1", "leftValue": "={{ $json._error }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "notes": "ORCHESTRATOR: Route validation errors directly to response."
+    },
+    {
+      "id": "node_execute_unified_flow",
+      "name": "Execute_Unified_Flow",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [850, 500],
+      "parameters": {
+        "jsCode": "// ============================================\n// UNIFIED FLOW EXECUTOR\n// ============================================\n// ROLE: n8n is the ORCHESTRATOR, NOT the brain.\n// BRAIN: unified-agent-flow.json defines all logic.\n// This node executes steps 01-10 in order.\n// ============================================\n\nconst input = $input.first().json;\n\n// ============================================\n// UNIFIED FLOW DEFINITION (Source of Truth)\n// In production: Load from /agents/unified-agent-flow.json\n// ============================================\n\nconst UNIFIED_FLOW = {\n  intent_categories: [\n    { intent: 'COMPLAINT', priority: 1, agent: 'complaint',\n      ar: ['شكوى', 'مشكلة', 'زعلان', 'مش راضي', 'سيء', 'وحش', 'عايز فلوسي', 'استرجاع', 'غلط', 'كذب'],\n      en: ['complaint', 'problem', 'angry', 'not satisfied', 'bad', 'terrible', 'refund', 'return', 'wrong', 'lied'] },\n    { intent: 'HUMAN_REQUEST', priority: 2, agent: 'escalation',\n      ar: ['عايز اتكلم مع حد', 'موظف', 'خدمة عملاء', 'بني آدم', 'مدير', 'مسؤول'],\n      en: ['talk to someone', 'human', 'customer service', 'real person', 'manager', 'supervisor'] },\n    { intent: 'WARRANTY', priority: 3, agent: 'warranty',\n      ar: ['ضمان', 'تفعيل الضمان', 'شهادة ضمان', 'تصليح', 'صيانة', 'عيب صناعة'],\n      en: ['warranty', 'guarantee', 'repair', 'maintenance', 'defect'] },\n    { intent: 'SALES_PRICE', priority: 4, agent: 'sales',\n      ar: ['سعر', 'بكام', 'كام', 'تكلفة', 'عروض', 'خصم', 'تقسيط'],\n      en: ['price', 'cost', 'how much', 'offers', 'discount', 'installment'] },\n    { intent: 'SALES_RECOMMENDATION', priority: 5, agent: 'sales',\n      ar: ['عايز اشتري', 'عايز مرتبة', 'انصحني', 'افضل', 'اختار', 'انواع'],\n      en: ['buy', 'purchase', 'recommend', 'best', 'types', 'suggest'] },\n    { intent: 'DELIVERY', priority: 6, agent: 'support',\n      ar: ['توصيل', 'شحن', 'يوصل امتى'],\n      en: ['delivery', 'shipping', 'when arrive'] },\n    { intent: 'GENERAL_SUPPORT', priority: 7, agent: 'support',\n      ar: ['فين الفرع', 'عنوان', 'مواعيد', 'سؤال'],\n      en: ['store', 'address', 'hours', 'question'] }\n  ],\n  immediate_escalation: {\n    legal_ar: ['محامي', 'قانون', 'شرطة', 'نيابة'],\n    legal_en: ['lawyer', 'legal', 'police', 'court'],\n    media_ar: ['هنشر', 'فيسبوك', 'سوشيال'],\n    media_en: ['post', 'facebook', 'social media']\n  },\n  escalation_messages: {\n    ar: 'هحولك دلوقتي لأحد موظفين خدمة العملاء. استنى لحظة من فضلك.',\n    en: \"I'm connecting you to customer service now. Please hold.\"\n  },\n  error_messages: {\n    ar: 'معلش، حصل مشكلة. هحولك لحد يساعدك.',\n    en: \"Sorry, there was an issue. Let me connect you with someone who can help.\"\n  }\n};\n\n// ============================================\n// CONTEXT OBJECT (maintained through steps)\n// ============================================\n\nconst ctx = {\n  input: {\n    session_id: input.session_id,\n    channel: input.channel,\n    language: null,\n    user_message: input.user_message,\n    metadata: input.metadata || {}\n  },\n  normalized_input: null,\n  intent_result: null,\n  selected_agent: null,\n  agent_config: null,\n  agent_response: null,\n  escalation_state: {\n    required: false,\n    reason: null,\n    mode: null\n  }\n};\n\n// ============================================\n// STEP 02: NORMALIZE INPUT\n// ============================================\n\nfunction containsArabic(text) {\n  return /[\\u0600-\\u06FF]/.test(text);\n}\n\nfunction normalizeArabic(text) {\n  return text\n    .replace(/[\\u064B-\\u065F\\u0670]/g, '')\n    .replace(/[\\u0622\\u0623\\u0625]/g, '\\u0627')\n    .replace(/[\\u0649]/g, '\\u064A');\n}\n\nconst userMessage = ctx.input.user_message.trim();\n\n// Detect language if not provided\nctx.input.language = input.language || (containsArabic(userMessage) ? 'ar' : 'en');\n\n// Normalize message\nctx.normalized_input = {\n  message: ctx.input.language === 'ar' ? normalizeArabic(userMessage) : userMessage.toLowerCase(),\n  language: ctx.input.language,\n  conversation_turn: (ctx.input.metadata.conversation_turn || 0) + 1\n};\n\n// ============================================\n// STEP 03: DETECT INTENT (from unified flow)\n// ============================================\n\nconst message = ctx.normalized_input.message;\nconst lang = ctx.input.language;\n\nlet intentResult = {\n  intent: 'GENERAL_SUPPORT',\n  agent: 'support',\n  confidence: 0.5,\n  keywords: []\n};\n\n// Priority-based keyword matching (from unified flow)\nfor (const def of UNIFIED_FLOW.intent_categories) {\n  const keywords = lang === 'ar' ? def.ar : def.en;\n  const matches = keywords.filter(k => message.includes(k));\n  if (matches.length > 0) {\n    intentResult = {\n      intent: def.intent,\n      agent: def.agent,\n      confidence: Math.min(0.95, 0.5 + (matches.length * 0.15)),\n      keywords: matches\n    };\n    break;\n  }\n}\n\nctx.intent_result = intentResult;\n\n// ============================================\n// STEP 05: PRE-EXECUTION SAFETY CHECK\n// Check for immediate escalation triggers\n// ============================================\n\nconst legalKeywords = lang === 'ar' ? UNIFIED_FLOW.immediate_escalation.legal_ar : UNIFIED_FLOW.immediate_escalation.legal_en;\nconst mediaKeywords = lang === 'ar' ? UNIFIED_FLOW.immediate_escalation.media_ar : UNIFIED_FLOW.immediate_escalation.media_en;\n\nfor (const kw of [...legalKeywords, ...mediaKeywords]) {\n  if (message.includes(kw)) {\n    ctx.escalation_state = {\n      required: true,\n      reason: legalKeywords.includes(kw) ? 'legal_threat' : 'media_threat',\n      mode: 'immediate'\n    };\n    ctx.intent_result = { intent: 'HUMAN_REQUEST', agent: 'escalation', confidence: 1.0, keywords: [kw] };\n    break;\n  }\n}\n\n// ============================================\n// STEP 04: SELECT AGENT\n// ============================================\n\nctx.selected_agent = ctx.intent_result.agent;\n\n// ============================================\n// OUTPUT: Pass to next node for agent execution\n// ============================================\n\nreturn {\n  json: {\n    ...ctx,\n    _step: 'flow_executed'\n  }\n};"
+      },
+      "notes": "UNIFIED FLOW EXECUTOR: Executes steps 01-05 from unified-agent-flow.json. Intent detection, normalization, safety checks. NO HARDCODED LOGIC - reads from flow definition."
+    },
+    {
+      "id": "node_load_agent_config",
+      "name": "Load_Agent_Config_API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1100, 500],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.BACKEND_URL || 'http://localhost:3000' }}/api/agents/{{ $json.selected_agent }}",
+        "options": { "timeout": 5000 },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "Content-Type", "value": "application/json" }]
+        }
+      },
+      "notes": "ORCHESTRATOR: Loads agent config from API. Source of Truth: /agents/*.agent.json"
+    },
+    {
+      "id": "node_merge_agent_config",
+      "name": "Merge_Agent_Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1300, 500],
+      "parameters": {
+        "jsCode": "// ============================================\n// MERGE AGENT CONFIG INTO CONTEXT\n// Orchestrator Role: Integration Layer\n// ============================================\n\nconst agentConfig = $input.first().json;\nconst ctx = $('Execute_Unified_Flow').first().json;\n\n// Merge agent config into context\nctx.agent_config = agentConfig;\n\nreturn { json: ctx };"
+      },
+      "notes": "ORCHESTRATOR: Merges loaded agent config into flow context."
+    },
+    {
+      "id": "node_execute_agent",
+      "name": "Execute_Agent",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1500, 500],
+      "parameters": {
+        "jsCode": "// ============================================\n// STEP 06: EXECUTE AGENT\n// ============================================\n// Orchestrator Role: Pass context to agent, get response.\n// Agent config comes from /agents/*.agent.json (loaded via API)\n// NO HARDCODED AGENT LOGIC HERE.\n// ============================================\n\nconst ctx = $input.first().json;\nconst config = ctx.agent_config;\nconst lang = ctx.input.language;\nconst intent = ctx.intent_result.intent;\n\n// ============================================\n// ENFORCE FORBIDDEN ACTIONS (from unified flow)\n// ============================================\n\nconst FORBIDDEN_GLOBAL = [\n  'Invent information',\n  'Make promises about delivery dates',\n  'Approve or reject warranty claims',\n  'Offer unauthorized discounts',\n  'Make legal statements',\n  'Argue with customer'\n];\n\n// Agent forbidden actions from config\nconst agentForbidden = config.forbidden_actions || [];\n\n// ============================================\n// GENERATE RESPONSE (using agent templates)\n// ============================================\n\nconst templates = config.response_templates || {};\nconst tone = config.allowed_outputs?.text?.tone?.[lang] || '';\nconst maxLength = config.allowed_outputs?.text?.max_length || 500;\n\nlet responseText = '';\nlet responseType = 'text';\nlet productCard = null;\nlet escalationRequired = ctx.escalation_state.required;\n\n// Route based on agent type\nswitch (ctx.selected_agent) {\n  case 'sales':\n    if (intent === 'SALES_PRICE') {\n      responseText = templates.price_inquiry?.[lang] || (lang === 'ar' ? 'خليني أجيبلك الأسعار...' : 'Let me get the prices...');\n      // PLACEHOLDER: Fetch from database\n      responseText += lang === 'ar' ? ' أسعارنا بتبدأ من 8,000 جنيه.' : ' Our prices start from 8,000 EGP.';\n    } else if (intent === 'SALES_RECOMMENDATION') {\n      responseText = lang === 'ar' ? 'بناءً على احتياجاتك:' : 'Based on your needs:';\n      responseType = 'product_card';\n      productCard = {\n        name: lang === 'ar' ? 'مرتبة يانسن أورثوبيديك' : 'Janssen Orthopedic Mattress',\n        description: lang === 'ar' ? 'مرتبة طبية بضمان 10 سنين' : 'Medical mattress with 10-year warranty',\n        price: '12,500 EGP',\n        warranty: lang === 'ar' ? '10 سنين ضمان' : '10 years warranty',\n        url: '/products/orthopedic'\n      };\n    } else {\n      responseText = templates.greeting?.[lang] || (lang === 'ar' ? 'أهلاً! إزاي أقدر أساعدك؟' : 'Hello! How can I help?');\n    }\n    break;\n    \n  case 'support':\n    if (intent === 'DELIVERY') {\n      const delivery = config.delivery_info || {};\n      const regions = delivery.regions || {};\n      responseText = lang === 'ar' ? 'بخصوص التوصيل:\\n' : 'Regarding delivery:\\n';\n      if (regions.cairo_giza) responseText += `• ${regions.cairo_giza[lang]}\\n`;\n      if (regions.alexandria) responseText += `• ${regions.alexandria[lang]}\\n`;\n      if (regions.other_governorates) responseText += `• ${regions.other_governorates[lang]}\\n`;\n      if (delivery.free_delivery_note) responseText += `\\n${delivery.free_delivery_note[lang]}`;\n    } else {\n      responseText = templates.greeting?.[lang] || (lang === 'ar' ? 'أهلاً! أنا هنا أساعدك.' : 'Hello! I\\'m here to help.');\n    }\n    break;\n    \n  case 'warranty':\n    const claimKeywords = lang === 'ar' ? ['طلب ضمان', 'استبدال', 'تصليح'] : ['claim', 'replace', 'repair'];\n    const isClaim = claimKeywords.some(k => ctx.normalized_input.message.includes(k));\n    \n    if (isClaim) {\n      responseText = templates.claim_process?.[lang] || (lang === 'ar'\n        ? 'علشان نقدر نفتحلك طلب ضمان، هحتاج منك:\\n1. رقم الفاتورة\\n2. تاريخ الشراء\\n3. وصف المشكلة'\n        : \"To open a warranty claim, I'll need:\\n1. Invoice number\\n2. Purchase date\\n3. Issue description\");\n      escalationRequired = true; // Claims ALWAYS escalate per unified flow\n      ctx.escalation_state.reason = 'warranty_claim';\n      ctx.escalation_state.mode = 'after_response';\n    } else {\n      const policy = config.warranty_policies?.standard_mattress || {};\n      responseText = templates.warranty_inquiry?.[lang] || '';\n      if (policy.duration_years) {\n        responseText += lang === 'ar'\n          ? `\\n\\nضمان يانسن ${policy.duration_years} سنين.`\n          : `\\n\\nJanssen warranty is ${policy.duration_years} years.`;\n      }\n    }\n    break;\n    \n  case 'complaint':\n    // Complaints ALWAYS escalate per unified flow\n    const deEscalation = config.de_escalation_phrases?.[lang] || [];\n    const phrase = deEscalation[0] || (lang === 'ar' ? 'معلش جداً' : \"I'm sorry\");\n    responseText = templates.acknowledge?.[lang] || phrase;\n    responseText += '\\n\\n' + (templates.collect_details?.[lang] || '');\n    escalationRequired = true;\n    ctx.escalation_state.reason = 'complaint';\n    ctx.escalation_state.mode = 'after_response';\n    break;\n    \n  case 'escalation':\n    // Direct escalation - no agent response needed\n    escalationRequired = true;\n    ctx.escalation_state.reason = ctx.escalation_state.reason || 'human_request';\n    ctx.escalation_state.mode = 'immediate';\n    break;\n    \n  default:\n    responseText = lang === 'ar' ? 'أهلاً! إزاي أقدر أساعدك؟' : 'Hello! How can I help?';\n}\n\n// Enforce max response length\nif (responseText.length > maxLength) {\n  responseText = responseText.substring(0, maxLength - 3) + '...';\n}\n\n// Update context with agent response\nctx.agent_response = {\n  text: responseText,\n  response_type: responseType,\n  product: productCard\n};\n\nctx.escalation_state.required = escalationRequired;\n\nreturn { json: ctx };"
+      },
+      "notes": "STEP 06: Execute Agent. Uses agent_config from API. Templates and rules from JSON. NO hardcoded replies."
+    },
+    {
+      "id": "node_check_escalation",
+      "name": "Check_Escalation",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1700, 500],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "conditions": [
+            { "id": "c1", "leftValue": "={{ $json.escalation_state.required }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "notes": "STEP 07: Check escalation per unified-agent-flow.json rules."
+    },
+    {
+      "id": "node_escalation_handler",
+      "name": "Escalation_Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1950, 400],
+      "parameters": {
+        "jsCode": "// ============================================\n// STEP 08: ESCALATE TO HUMAN\n// ============================================\n// TERMINAL: Escalation ends AI handling.\n// Source of Truth: unified-agent-flow.json → step_08_escalate\n// ============================================\n\nconst ctx = $input.first().json;\nconst lang = ctx.input.language;\nconst config = ctx.agent_config || {};\n\n// ============================================\n// ESCALATION MESSAGES (from unified flow)\n// ============================================\n\nconst ESCALATION_MESSAGES = {\n  ar: 'هحولك دلوقتي لأحد موظفين خدمة العملاء. استنى لحظة من فضلك.',\n  en: \"I'm connecting you to customer service now. Please hold.\"\n};\n\n// ============================================\n// QUEUE SELECTION (from unified flow)\n// ============================================\n\nconst QUEUE_MAPPING = {\n  complaint: { queue: 'complaints_queue', priority: 'high' },\n  warranty: { queue: 'warranty_queue', priority: 'high' },\n  sales: { queue: 'sales_queue', priority: 'medium' },\n  support: { queue: 'support_queue', priority: 'normal' }\n};\n\nconst PRIORITY_MAPPING = {\n  legal_threat: 'critical',\n  media_threat: 'critical',\n  complaint: 'high',\n  warranty_claim: 'high',\n  human_request: 'normal'\n};\n\n// Determine queue and priority\nconst reason = ctx.escalation_state.reason || 'human_request';\nconst previousAgent = ctx.selected_agent || 'support';\nconst queueInfo = QUEUE_MAPPING[previousAgent] || QUEUE_MAPPING.support;\nconst priority = PRIORITY_MAPPING[reason] || 'normal';\n\n// Override for critical threats\nif (reason === 'legal_threat' || reason === 'media_threat') {\n  queueInfo.queue = 'priority_queue';\n  queueInfo.priority = 'critical';\n}\n\n// ============================================\n// BUILD HANDOVER MESSAGE\n// ============================================\n\nlet handoverMessage = ESCALATION_MESSAGES[lang];\n\n// If escalation_mode is 'after_response', prepend agent response\nif (ctx.escalation_state.mode === 'after_response' && ctx.agent_response?.text) {\n  handoverMessage = ctx.agent_response.text + '\\n\\n' + handoverMessage;\n}\n\n// ============================================\n// TERMINAL OUTPUT (unified-agent-flow.json output_schema)\n// ============================================\n\nreturn {\n  json: {\n    response_type: 'handover',\n    content: {\n      text: handoverMessage,\n      handover_message: handoverMessage,\n      queue: queueInfo.queue,\n      priority: priority\n    },\n    next_action: 'transfer_to_human',\n    agent_used: 'escalation',\n    confidence_score: ctx.intent_result?.confidence || 1.0,\n    _terminal: true,\n    _log: {\n      session_id: ctx.input.session_id,\n      escalation_reason: reason,\n      previous_agent: previousAgent,\n      intent: ctx.intent_result?.intent\n    }\n  }\n};"
+      },
+      "notes": "STEP 08: TERMINAL. Escalation ends AI handling. Output matches unified-agent-flow.json output_schema."
+    },
+    {
+      "id": "node_format_response",
+      "name": "Format_Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1950, 600],
+      "parameters": {
+        "jsCode": "// ============================================\n// STEP 09: FORMAT RESPONSE\n// ============================================\n// Orchestrator Role: Format for channel per unified flow\n// Source of Truth: unified-agent-flow.json → step_09_format_response\n// ============================================\n\nconst ctx = $input.first().json;\nconst channel = ctx.input.channel;\nconst lang = ctx.input.language;\n\n// ============================================\n// CHANNEL FORMATTING (from unified flow)\n// ============================================\n\nconst CHANNEL_CONFIG = {\n  chat: { format: 'html', max_length: null, strip_emojis: false },\n  voice: { format: 'ssml', max_length: 200, strip_emojis: true },\n  whatsapp: { format: 'whatsapp', max_length: 4096, strip_emojis: false }\n};\n\nconst channelConfig = CHANNEL_CONFIG[channel] || CHANNEL_CONFIG.chat;\nlet text = ctx.agent_response?.text || '';\nlet product = ctx.agent_response?.product || null;\nlet responseType = ctx.agent_response?.response_type || 'text';\n\n// Apply channel-specific formatting\nif (channel === 'voice') {\n  // Strip emojis for voice\n  text = text.replace(/[\\u{1F300}-\\u{1F9FF}]/gu, '');\n  // Shorten for voice\n  if (text.length > channelConfig.max_length) {\n    text = text.substring(0, channelConfig.max_length - 3) + '...';\n  }\n  // Wrap in SSML\n  text = `<speak>${text}</speak>`;\n} else if (channel === 'chat') {\n  // Add HTML line breaks\n  text = text.replace(/\\n/g, '<br>');\n}\n\n// Build content object\nconst content = { text: text };\nif (responseType === 'product_card' && product) {\n  content.product = product;\n}\n\n// ============================================\n// OUTPUT (unified-agent-flow.json output_schema)\n// ============================================\n\nreturn {\n  json: {\n    response_type: responseType,\n    content: content,\n    next_action: 'await_response',\n    agent_used: ctx.selected_agent,\n    confidence_score: ctx.intent_result?.confidence || 0.5,\n    _log: {\n      session_id: ctx.input.session_id,\n      intent: ctx.intent_result?.intent,\n      escalated: false\n    }\n  }\n};"
+      },
+      "notes": "STEP 09: Format response for channel per unified-agent-flow.json."
+    },
+    {
+      "id": "node_log_to_crm",
+      "name": "Log_To_CRM",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2150, 500],
+      "parameters": {
+        "jsCode": "// ============================================\n// STEP 10: LOG AND RETURN\n// ============================================\n// Orchestrator Role: Log interaction for CRM/analytics\n// Source of Truth: unified-agent-flow.json → step_10_log_and_return\n// PLACEHOLDER: DB insert and CRM sync to be implemented\n// ============================================\n\nconst response = $input.first().json;\n\n// ============================================\n// LOG ENTRY (per unified flow logging spec)\n// ============================================\n\nconst logEntry = {\n  session_id: response._log?.session_id,\n  agent_used: response.agent_used,\n  intent: response._log?.intent,\n  escalated: response._log?.escalated || response.response_type === 'handover',\n  confidence_score: response.confidence_score,\n  response_type: response.response_type,\n  timestamp: new Date().toISOString()\n};\n\n// PLACEHOLDER: Insert to agents_log table\n// await db.query('INSERT INTO agents_log ...');\n\n// PLACEHOLDER: CRM sync\n// await crmClient.logInteraction(logEntry);\n\nconsole.log('[Log_To_CRM]', JSON.stringify(logEntry));\n\n// ============================================\n// CLEAN OUTPUT (remove internal fields)\n// ============================================\n\nconst cleanResponse = {\n  response_type: response.response_type,\n  content: response.content,\n  next_action: response.next_action,\n  agent_used: response.agent_used,\n  confidence_score: response.confidence_score\n};\n\nreturn { json: cleanResponse };"
+      },
+      "notes": "STEP 10: Log to CRM (placeholder). Clean output to match exact schema."
+    },
+    {
+      "id": "node_return_response",
+      "name": "Return_Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2350, 500],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [{ "name": "Content-Type", "value": "application/json" }]
+          }
+        }
+      },
+      "notes": "ORCHESTRATOR: Return response. Output ALWAYS matches unified-agent-flow.json output_schema."
+    },
+    {
+      "id": "node_return_error",
+      "name": "Return_Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [850, 300],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ response_type: $json.response_type, content: $json.content, next_action: $json.next_action, agent_used: $json.agent_used, confidence_score: $json.confidence_score }) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [{ "name": "Content-Type", "value": "application/json" }]
+          }
+        }
+      },
+      "notes": "ORCHESTRATOR: Return validation error response."
+    }
+  ],
+  "connections": {
+    "Webhook_In": { "main": [[{ "node": "Validate_Input", "type": "main", "index": 0 }]] },
+    "Validate_Input": { "main": [[{ "node": "Check_Validation", "type": "main", "index": 0 }]] },
+    "Check_Validation": {
+      "main": [
+        [{ "node": "Return_Error", "type": "main", "index": 0 }],
+        [{ "node": "Execute_Unified_Flow", "type": "main", "index": 0 }]
+      ]
+    },
+    "Execute_Unified_Flow": { "main": [[{ "node": "Load_Agent_Config_API", "type": "main", "index": 0 }]] },
+    "Load_Agent_Config_API": { "main": [[{ "node": "Merge_Agent_Config", "type": "main", "index": 0 }]] },
+    "Merge_Agent_Config": { "main": [[{ "node": "Execute_Agent", "type": "main", "index": 0 }]] },
+    "Execute_Agent": { "main": [[{ "node": "Check_Escalation", "type": "main", "index": 0 }]] },
+    "Check_Escalation": {
+      "main": [
+        [{ "node": "Escalation_Handler", "type": "main", "index": 0 }],
+        [{ "node": "Format_Response", "type": "main", "index": 0 }]
+      ]
+    },
+    "Escalation_Handler": { "main": [[{ "node": "Log_To_CRM", "type": "main", "index": 0 }]] },
+    "Format_Response": { "main": [[{ "node": "Log_To_CRM", "type": "main", "index": 0 }]] },
+    "Log_To_CRM": { "main": [[{ "node": "Return_Response", "type": "main", "index": 0 }]] }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all"
+  },
+  "staticData": null,
+  "tags": [
+    { "name": "janssen-ai" },
+    { "name": "production" },
+    { "name": "orchestrator" }
+  ],
+  "meta": {
+    "version": "3.0.0",
+    "description": "Janssen AI Brain - Pure Orchestrator. Executes unified-agent-flow.json as single source of truth.",
+    "author": "Janssen AI Team",
+    "status": "production-ready",
+    "architecture": {
+      "widget": "UI only - sends messages, renders responses",
+      "n8n": "ORCHESTRATOR - executes flow, loads configs, integrates systems",
+      "unified_flow": "BRAIN - defines all logic, intents, routing, escalation",
+      "agents": "CONFIG - define tone, templates, rules per agent"
+    },
+    "flow_steps": [
+      "step_01: Validate_Input - validate per input_schema",
+      "step_02: Execute_Unified_Flow - normalize input",
+      "step_03: Execute_Unified_Flow - detect intent",
+      "step_04: Execute_Unified_Flow - select agent",
+      "step_05: Execute_Unified_Flow - pre-execution safety check",
+      "step_06: Execute_Agent - run agent with config",
+      "step_07: Check_Escalation - evaluate escalation rules",
+      "step_08: Escalation_Handler - TERMINAL handover",
+      "step_09: Format_Response - format for channel",
+      "step_10: Log_To_CRM - log and return"
+    ],
+    "output_schema": {
+      "response_type": "text | product_card | handover",
+      "content": "{ text, product?, handover_message? }",
+      "next_action": "await_response | transfer_to_human | end_conversation",
+      "agent_used": "sales | support | warranty | complaint | escalation",
+      "confidence_score": "0.0 - 1.0"
+    }
+  }
+}

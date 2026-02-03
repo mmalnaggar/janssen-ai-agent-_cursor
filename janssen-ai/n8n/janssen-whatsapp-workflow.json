@@ -1,0 +1,107 @@
+{
+  "name": "Janssen_WhatsApp_Bot",
+  "nodes": [
+    {
+      "id": "whatsapp_trigger",
+      "name": "1_WhatsApp_Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [100, 400],
+      "parameters": {
+        "path": "janssen-whatsapp",
+        "httpMethod": "POST",
+        "responseMode": "responseNode"
+      }
+    },
+    {
+      "id": "parse_whatsapp",
+      "name": "2_Parse_WhatsApp",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [350, 400],
+      "parameters": {
+        "jsCode": "// Parse incoming WhatsApp message\n// Works with Twilio, WhatsApp Business API, or 360dialog\n\nconst rawInput = $input.first().json;\nconst body = rawInput.body || rawInput;\n\n// Twilio format\nlet userMessage = body.Body || body.body || '';\nlet phone = body.From || body.from || body.phone || '';\nlet waId = body.WaId || body.wa_id || '';\n\n// WhatsApp Business API format\nif (body.entry && body.entry[0]) {\n  const entry = body.entry[0];\n  if (entry.changes && entry.changes[0]) {\n    const change = entry.changes[0].value;\n    if (change.messages && change.messages[0]) {\n      const msg = change.messages[0];\n      userMessage = msg.text?.body || '';\n      phone = msg.from || '';\n      waId = msg.id || '';\n    }\n  }\n}\n\n// 360dialog format\nif (body.messages && body.messages[0]) {\n  const msg = body.messages[0];\n  userMessage = msg.text?.body || msg.body || '';\n  phone = msg.from || body.from || '';\n}\n\n// Detect language\nfunction containsArabic(text) {\n  return /[\\u0600-\\u06FF]/.test(text);\n}\n\nconst language = containsArabic(userMessage) ? 'ar' : 'en';\nconst sessionId = 'wa_' + phone.replace(/[^0-9]/g, '');\n\nreturn {\n  json: {\n    user_message: userMessage.trim(),\n    session_id: sessionId,\n    channel: 'whatsapp',\n    language: language,\n    phone: phone,\n    wa_message_id: waId,\n    timestamp: new Date().toISOString()\n  }\n};"
+      }
+    },
+    {
+      "id": "detect_intent",
+      "name": "3_Detect_Intent",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [600, 400],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst msg = input.user_message;\nconst lang = input.language;\n\nconst intents = [\n  { intent: 'LEGAL_THREAT', agent: 'escalation', ar: ['محامي', 'قانون', 'شرطة', 'هنشر', 'فيسبوك'], en: ['lawyer', 'legal', 'police', 'facebook'] },\n  { intent: 'COMPLAINT', agent: 'complaint', ar: ['شكوى', 'مشكلة', 'زعلان', 'مش راضي', 'استرجاع'], en: ['complaint', 'problem', 'angry', 'refund'] },\n  { intent: 'HUMAN_REQUEST', agent: 'escalation', ar: ['موظف', 'خدمة عملاء', 'مدير'], en: ['human', 'customer service', 'manager'] },\n  { intent: 'WARRANTY', agent: 'warranty', ar: ['ضمان', 'تصليح', 'صيانة'], en: ['warranty', 'repair', 'maintenance'] },\n  { intent: 'SALES_PRICE', agent: 'sales', ar: ['سعر', 'بكام', 'كام', 'عروض', 'خصم'], en: ['price', 'cost', 'how much', 'discount'] },\n  { intent: 'SALES_REC', agent: 'sales', ar: ['عايز اشتري', 'مرتبة', 'انصحني', 'افضل'], en: ['buy', 'mattress', 'recommend', 'best'] },\n  { intent: 'DELIVERY', agent: 'support', ar: ['توصيل', 'شحن', 'يوصل امتى'], en: ['delivery', 'shipping', 'arrive'] },\n  { intent: 'STORE_INFO', agent: 'support', ar: ['فرع', 'عنوان', 'مواعيد'], en: ['store', 'address', 'hours', 'branch'] }\n];\n\nlet detected = { intent: 'GENERAL', agent: 'support', confidence: 0.5, matched: [] };\n\nfor (const def of intents) {\n  const keywords = lang === 'ar' ? def.ar : def.en;\n  const matches = keywords.filter(k => msg.includes(k));\n  if (matches.length > 0) {\n    detected = { intent: def.intent, agent: def.agent, confidence: 0.8, matched: matches };\n    break;\n  }\n}\n\nreturn { json: { ...input, ...detected } };"
+      }
+    },
+    {
+      "id": "generate_response",
+      "name": "4_Generate_Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [850, 400],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst lang = input.language;\nconst agent = input.agent;\nconst intent = input.intent;\n\nconst products = [\n  { name_ar: 'يانسن أورثوبيديك', name_en: 'Janssen Orthopedic', price: 12500 },\n  { name_ar: 'يانسن ميموري فوم', name_en: 'Janssen Memory Foam', price: 15000 },\n  { name_ar: 'يانسن سوبر سوفت', name_en: 'Janssen Super Soft', price: 10000 }\n];\n\nlet text = '';\nlet escalated = false;\n\nswitch (agent) {\n  case 'sales':\n    if (intent === 'SALES_PRICE') {\n      text = lang === 'ar'\n        ? `أسعار المراتب:\\n• ${products[0].name_ar}: ${products[0].price} جنيه\\n• ${products[1].name_ar}: ${products[1].price} جنيه\\n• ${products[2].name_ar}: ${products[2].price} جنيه\\n\\nللطلب تواصل معنا على واتساب`\n        : `Mattress prices:\\n• ${products[0].name_en}: ${products[0].price} EGP\\n• ${products[1].name_en}: ${products[1].price} EGP\\n• ${products[2].name_en}: ${products[2].price} EGP\\n\\nTo order contact us on WhatsApp`;\n    } else {\n      text = lang === 'ar' ? 'أهلاً! أنا هنا أساعدك تختار المرتبة المناسبة. عايز تعرف الأسعار؟' : \"Hello! I'm here to help you choose the right mattress. Want to know prices?\";\n    }\n    break;\n\n  case 'support':\n    if (intent === 'DELIVERY') {\n      text = lang === 'ar'\n        ? 'التوصيل:\\n• القاهرة: 2-3 أيام\\n• الإسكندرية: 3-5 أيام\\n• المحافظات: 5-7 أيام\\n\\nمجاني للطلبات فوق 5000 جنيه'\n        : 'Delivery:\\n• Cairo: 2-3 days\\n• Alexandria: 3-5 days\\n• Other: 5-7 days\\n\\nFree for orders above 5000 EGP';\n    } else if (intent === 'STORE_INFO') {\n      text = lang === 'ar'\n        ? 'فروعنا:\\n• مدينة نصر: شارع عباس العقاد\\n• المهندسين: شارع جامعة الدول\\n\\nمن 9 صباحاً لـ 9 مساءً'\n        : 'Branches:\\n• Nasr City: Abbas El-Akkad St.\\n• Mohandessin: Arab League St.\\n\\n9 AM to 9 PM';\n    } else {\n      text = lang === 'ar' ? 'أهلاً! إزاي أقدر أساعدك النهاردة؟' : 'Hello! How can I help you today?';\n    }\n    break;\n\n  case 'warranty':\n    text = lang === 'ar'\n      ? 'ضمان يانسن 10 سنين:\\n✅ عيوب الصناعة\\n✅ تهالك السوست\\n✅ انخفاض المرتبة > 3 سم\\n\\nللاستفسار تواصل معنا على واتساب'\n      : 'Janssen 10-year warranty:\\n✅ Manufacturing defects\\n✅ Spring deterioration\\n✅ Sagging > 3cm\\n\\nFor inquiries contact us on WhatsApp';\n    break;\n\n  case 'complaint':\n    text = lang === 'ar'\n      ? 'معلش جداً على اللي حصل. هحولك دلوقتي لقسم الشكاوى عبر واتساب'\n      : \"I'm sorry about what happened. Connecting you to complaints via WhatsApp\";\n    escalated = true;\n    break;\n\n  case 'escalation':\n    text = lang === 'ar'\n      ? 'هحولك دلوقتي لخدمة العملاء. تواصل معنا على واتساب'\n      : 'Connecting you to customer service. Contact us on WhatsApp';\n    escalated = true;\n    break;\n\n  default:\n    text = lang === 'ar' ? 'أهلاً! إزاي أقدر أساعدك؟' : 'Hello! How can I help you?';\n}\n\nreturn {\n  json: {\n    ...input,\n    response_text: text,\n    escalated: escalated\n  }\n};"
+      }
+    },
+    {
+      "id": "send_whatsapp",
+      "name": "5_Send_WhatsApp",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1100, 400],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.WHATSAPP_API_URL || 'https://api.twilio.com/2010-04-01/Accounts/' + $env.TWILIO_ACCOUNT_SID + '/Messages.json' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            { "name": "From", "value": "={{ 'whatsapp:' + $env.TWILIO_WHATSAPP_NUMBER }}" },
+            { "name": "To", "value": "={{ $json.phone }}" },
+            { "name": "Body", "value": "={{ $json.response_text }}" }
+          ]
+        }
+      },
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "REPLACE_WITH_YOUR_TWILIO_CREDENTIAL_ID",
+          "name": "Twilio Auth"
+        }
+      }
+    },
+    {
+      "id": "respond_webhook",
+      "name": "6_Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1350, 400],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: true, session_id: $json.session_id, agent: $json.agent, intent: $json.intent } }}",
+        "options": { "responseCode": 200 }
+      }
+    }
+  ],
+  "connections": {
+    "1_WhatsApp_Trigger": {
+      "main": [[{ "node": "2_Parse_WhatsApp", "type": "main", "index": 0 }]]
+    },
+    "2_Parse_WhatsApp": {
+      "main": [[{ "node": "3_Detect_Intent", "type": "main", "index": 0 }]]
+    },
+    "3_Detect_Intent": {
+      "main": [[{ "node": "4_Generate_Response", "type": "main", "index": 0 }]]
+    },
+    "4_Generate_Response": {
+      "main": [[{ "node": "5_Send_WhatsApp", "type": "main", "index": 0 }]]
+    },
+    "5_Send_WhatsApp": {
+      "main": [[{ "node": "6_Respond", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "janssen-ai" }, { "name": "whatsapp" }],
+  "meta": { "version": "1.0.0", "description": "WhatsApp bot via Twilio. Set TWILIO_WHATSAPP_NUMBER and webhook in Twilio console." }
+}

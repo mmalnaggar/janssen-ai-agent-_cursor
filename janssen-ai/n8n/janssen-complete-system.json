@@ -1,0 +1,112 @@
+{
+  "name": "Janssen_AI_Complete",
+  "nodes": [
+    {
+      "id": "webhook_in",
+      "name": "1_Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [100, 500],
+      "parameters": {
+        "path": "janssen-ai-incoming",
+        "httpMethod": "POST",
+        "responseMode": "responseNode"
+      }
+    },
+    {
+      "id": "normalize",
+      "name": "2_Normalize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [350, 500],
+      "parameters": {
+        "jsCode": "const rawInput = $input.first().json;\nconst body = rawInput.body || rawInput;\n\nfunction containsArabic(text) {\n  return /[\\u0600-\\u06FF]/.test(text);\n}\n\nconst userMessage = (body.user_message || body.message || '').trim();\nconst sessionId = body.session_id || 'session_' + Date.now();\nconst channel = body.channel || 'chat';\nconst phone = body.phone || '';\n\nlet language = body.language;\nif (!language) language = containsArabic(userMessage) ? 'ar' : 'en';\n\nreturn {\n  json: {\n    user_message: userMessage,\n    session_id: sessionId,\n    channel: channel,\n    language: language,\n    phone: phone,\n    metadata: body.metadata || {},\n    timestamp: new Date().toISOString()\n  }\n};"
+      }
+    },
+    {
+      "id": "detect_intent",
+      "name": "3_Detect_Intent",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [600, 500],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst msg = input.user_message;\nconst lang = input.language;\n\nconst intents = [\n  { intent: 'LEGAL_THREAT', agent: 'escalation', ar: ['محامي', 'قانون', 'شرطة', 'هنشر', 'فيسبوك'], en: ['lawyer', 'legal', 'police', 'facebook'] },\n  { intent: 'COMPLAINT', agent: 'complaint', ar: ['شكوى', 'مشكلة', 'زعلان', 'مش راضي', 'استرجاع'], en: ['complaint', 'problem', 'angry', 'refund'] },\n  { intent: 'HUMAN_REQUEST', agent: 'escalation', ar: ['موظف', 'خدمة عملاء', 'مدير'], en: ['human', 'customer service', 'manager'] },\n  { intent: 'WARRANTY', agent: 'warranty', ar: ['ضمان', 'تصليح', 'صيانة'], en: ['warranty', 'repair', 'maintenance'] },\n  { intent: 'SALES_PRICE', agent: 'sales', ar: ['سعر', 'بكام', 'كام', 'عروض', 'خصم'], en: ['price', 'cost', 'how much', 'discount'] },\n  { intent: 'SALES_REC', agent: 'sales', ar: ['عايز اشتري', 'مرتبة', 'انصحني', 'افضل'], en: ['buy', 'mattress', 'recommend', 'best'] },\n  { intent: 'DELIVERY', agent: 'support', ar: ['توصيل', 'شحن', 'يوصل امتى'], en: ['delivery', 'shipping', 'arrive'] },\n  { intent: 'STORE_INFO', agent: 'support', ar: ['فرع', 'عنوان', 'مواعيد'], en: ['store', 'address', 'hours', 'branch'] }\n];\n\nlet detected = { intent: 'GENERAL', agent: 'support', confidence: 0.5, matched: [] };\n\nfor (const def of intents) {\n  const keywords = lang === 'ar' ? def.ar : def.en;\n  const matches = keywords.filter(k => msg.includes(k));\n  if (matches.length > 0) {\n    detected = { intent: def.intent, agent: def.agent, confidence: 0.8, matched: matches };\n    break;\n  }\n}\n\nreturn { json: { ...input, ...detected } };"
+      }
+    },
+    {
+      "id": "generate_response",
+      "name": "4_Generate_Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [850, 500],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst lang = input.language;\nconst agent = input.agent;\nconst intent = input.intent;\n\n// Product database\nconst products = [\n  { id: 'prod_001', name_ar: 'يانسن أورثوبيديك', name_en: 'Janssen Orthopedic', price: 12500, warranty: 10, description_ar: 'مرتبة طبية للظهر', description_en: 'Orthopedic mattress' },\n  { id: 'prod_002', name_ar: 'يانسن ميموري فوم', name_en: 'Janssen Memory Foam', price: 15000, warranty: 12, description_ar: 'راحة فائقة مع تقنية الميموري', description_en: 'Memory foam comfort' },\n  { id: 'prod_003', name_ar: 'يانسن سوبر سوفت', name_en: 'Janssen Super Soft', price: 10000, warranty: 8, description_ar: 'نعومة استثنائية', description_en: 'Extra soft comfort' }\n];\n\nlet text = '';\nlet responseType = 'text';\nlet escalated = false;\nlet nextAction = 'await_response';\nlet productCard = null;\n\nswitch (agent) {\n  case 'sales':\n    if (intent === 'SALES_PRICE') {\n      text = lang === 'ar'\n        ? `أسعار المراتب:\\n• ${products[0].name_ar}: ${products[0].price.toLocaleString()} جنيه (ضمان ${products[0].warranty} سنين)\\n• ${products[1].name_ar}: ${products[1].price.toLocaleString()} جنيه (ضمان ${products[1].warranty} سنة)\\n• ${products[2].name_ar}: ${products[2].price.toLocaleString()} جنيه (ضمان ${products[2].warranty} سنين)\\n\\nعايز تفاصيل أكتر عن موديل معين؟`\n        : `Mattress prices:\\n• ${products[0].name_en}: ${products[0].price.toLocaleString()} EGP (${products[0].warranty}-year warranty)\\n• ${products[1].name_en}: ${products[1].price.toLocaleString()} EGP (${products[1].warranty}-year warranty)\\n• ${products[2].name_en}: ${products[2].price.toLocaleString()} EGP (${products[2].warranty}-year warranty)\\n\\nWant more details about a specific model?`;\n    } else {\n      text = lang === 'ar' ? 'أهلاً! أنا هنا أساعدك تختار المرتبة المناسبة. عايز تعرف الأسعار؟' : \"Hello! I'm here to help you choose. Want to know prices?\";\n      responseType = 'product_card';\n      productCard = {\n        id: products[0].id,\n        name: lang === 'ar' ? products[0].name_ar : products[0].name_en,\n        description: lang === 'ar' ? products[0].description_ar : products[0].description_en,\n        price: products[0].price.toLocaleString() + ' EGP',\n        warranty: products[0].warranty + (lang === 'ar' ? ' سنين' : ' years'),\n        url: '#'\n      };\n    }\n    break;\n\n  case 'support':\n    if (intent === 'DELIVERY') {\n      text = lang === 'ar'\n        ? 'التوصيل:\\n• القاهرة والجيزة: 2-3 أيام\\n• الإسكندرية: 3-5 أيام\\n• المحافظات: 5-7 أيام\\n\\n🚚 مجاني للطلبات فوق 5000 جنيه\\n\\nإنت فين؟'\n        : 'Delivery times:\\n• Cairo & Giza: 2-3 days\\n• Alexandria: 3-5 days\\n• Other governorates: 5-7 days\\n\\n🚚 Free for orders above 5000 EGP\\n\\nWhere are you located?';\n    } else if (intent === 'STORE_INFO') {\n      text = lang === 'ar'\n        ? 'فروعنا:\\n\\n📍 مدينة نصر: شارع عباس العقاد\\n📍 المهندسين: شارع جامعة الدول العربية\\n\\n🕘 من 9 صباحاً لـ 9 مساءً\\n📞 واتساب/WhatsApp'\n        : 'Our branches:\\n\\n📍 Nasr City: Abbas El-Akkad St.\\n📍 Mohandessin: Arab League St.\\n\\n🕘 9 AM to 9 PM\\n📞 WhatsApp';\n    } else {\n      text = lang === 'ar' ? 'أهلاً! إزاي أقدر أساعدك النهاردة؟' : 'Hello! How can I help you today?';\n    }\n    break;\n\n  case 'warranty':\n    text = lang === 'ar'\n      ? 'ضمان يانسن 10 سنين:\\n\\n✅ عيوب الصناعة\\n✅ تهالك السوست\\n✅ انخفاض المرتبة > 3 سم\\n\\n❌ مش بيشمل: سوء الاستخدام، البقع، الحرق\\n\\nمحتاج تفعيل الضمان ولا عندك مشكلة؟'\n      : 'Janssen 10-year warranty covers:\\n\\n✅ Manufacturing defects\\n✅ Spring deterioration\\n✅ Sagging > 3cm\\n\\n❌ Excludes: Misuse, stains, burns\\n\\nNeed to activate warranty or have an issue?';\n    break;\n\n  case 'complaint':\n    text = lang === 'ar'\n      ? 'معلش جداً على اللي حصل 😔\\n\\nعلشان أساعدك، محتاج:\\n1. إيه اللي حصل؟\\n2. امتى حصل؟\\n3. رقم الفاتورة؟\\n\\nهحولك دلوقتي لقسم الشكاوى.'\n      : \"I'm truly sorry about what happened 😔\\n\\nTo help you, I need:\\n1. What happened?\\n2. When?\\n3. Invoice number?\\n\\nConnecting you to complaints now.\";\n    escalated = true;\n    nextAction = 'transfer_to_human';\n    responseType = 'handover';\n    break;\n\n  case 'escalation':\n    text = lang === 'ar'\n      ? 'هحولك دلوقتي لأحد موظفين خدمة العملاء. استنى لحظة من فضلك 🙏'\n      : 'Connecting you to a customer service representative. Please hold 🙏';\n    escalated = true;\n    nextAction = 'transfer_to_human';\n    responseType = 'handover';\n    break;\n\n  default:\n    text = lang === 'ar' ? 'أهلاً! إزاي أقدر أساعدك؟' : 'Hello! How can I help you?';\n}\n\n// Format for channel\nif (input.channel === 'chat') {\n  text = text.replace(/\\n/g, '<br>');\n} else if (input.channel === 'voice') {\n  text = text.replace(/[\\u{1F300}-\\u{1F9FF}]/gu, '').replace(/\\n+/g, '. ');\n}\n\nreturn {\n  json: {\n    ...input,\n    response_text: text,\n    response_type: responseType,\n    escalated: escalated,\n    next_action: nextAction,\n    product_card: productCard\n  }\n};"
+      }
+    },
+    {
+      "id": "format_response",
+      "name": "5_Format_Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 500],
+      "parameters": {
+        "jsCode": "const i = $input.first().json;\n\nconst content = { text: i.response_text };\nif (i.escalated) content.handover_message = i.response_text;\nconst response = {\n  response_type: i.response_type,\n  content,\n  next_action: i.next_action,\n  agent_used: i.agent,\n  intent: i.intent,\n  confidence_score: i.confidence,\n  session_id: i.session_id,\n  language: i.language,\n  channel: i.channel,\n  matched_keywords: i.matched\n};\n\nif (i.product_card) {\n  response.content.product = i.product_card;\n}\n\nif (i.escalated) {\n  response.escalation = {\n    queue: i.intent === 'COMPLAINT' ? 'complaints_queue' : 'priority_queue',\n    priority: i.intent === 'LEGAL_THREAT' ? 'critical' : 'high'\n  };\n}\n\n// Store for logging\nresponse._log_data = {\n  session_id: i.session_id,\n  phone: i.phone,\n  channel: i.channel,\n  language: i.language,\n  user_message: i.user_message,\n  bot_response: i.response_text.replace(/<br>/g, '\\n'),\n  intent: i.intent,\n  agent_used: i.agent,\n  confidence_score: i.confidence,\n  escalated: i.escalated,\n  metadata: i.metadata\n};\n\nreturn { json: response };"
+      }
+    },
+    {
+      "id": "log_to_crm",
+      "name": "6_Log_To_CRM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1350, 600],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CRM_LOG_WEBHOOK || 'https://YOUR-N8N-URL/webhook/janssen-log' }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json._log_data) }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "id": "respond",
+      "name": "7_Return_Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1350, 400],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { response_type: $json.response_type, content: $json.content, next_action: $json.next_action, agent_used: $json.agent_used, intent: $json.intent, confidence_score: $json.confidence_score, session_id: $json.session_id, language: $json.language, channel: $json.channel, matched_keywords: $json.matched_keywords, escalation: $json.escalation } }}",
+        "options": { "responseCode": 200 }
+      }
+    }
+  ],
+  "connections": {
+    "1_Webhook": {
+      "main": [[{ "node": "2_Normalize", "type": "main", "index": 0 }]]
+    },
+    "2_Normalize": {
+      "main": [[{ "node": "3_Detect_Intent", "type": "main", "index": 0 }]]
+    },
+    "3_Detect_Intent": {
+      "main": [[{ "node": "4_Generate_Response", "type": "main", "index": 0 }]]
+    },
+    "4_Generate_Response": {
+      "main": [[{ "node": "5_Format_Response", "type": "main", "index": 0 }]]
+    },
+    "5_Format_Response": {
+      "main": [
+        [
+          { "node": "6_Log_To_CRM", "type": "main", "index": 0 },
+          { "node": "7_Return_Response", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "janssen-ai" }, { "name": "chat" }, { "name": "crm-log" }],
+  "meta": { "version": "3.0.0", "description": "Single-flow chat with product_card, handover, and optional CRM log. Response schema aligned with widget." }
+}

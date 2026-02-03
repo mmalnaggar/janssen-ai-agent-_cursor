@@ -1,0 +1,49 @@
+<!--
+  JANSSEN AI CHAT WIDGET - EMBED CODE
+  Copy this code to your website's HTML (before </body>)
+  Supports: Live Chat, WhatsApp CTA, product "Order Now"
+-->
+
+<!-- Option 1: Self-hosted (recommended for production) -->
+<script>
+  // REQUIRED: n8n webhook URL
+  window.JANSSEN_WEBHOOK_URL = 'https://n8n-2-7fw9.onrender.com/webhook/janssen-ai-incoming';
+  
+  // Optional: Customer ID if logged in
+  // window.JANSSEN_CUSTOMER_ID = 'customer_123';
+  
+  // Optional: WhatsApp number for "Order Now" in product cards (e.g. 201234567890)
+  // window.JANSSEN_WHATSAPP_NUMBER = '201234567890';
+</script>
+<link rel="stylesheet" href="https://your-domain.com/widget/styles.css">
+<script src="https://your-domain.com/widget/widget.js"></script>
+
+
+<!-- Option 2: CDN/Quick Test (use your actual file URLs) -->
+<!--
+<script>
+  window.JANSSEN_WEBHOOK_URL = 'https://n8n-2-7fw9.onrender.com/webhook/janssen-ai-incoming';
+  window.JANSSEN_WHATSAPP_NUMBER = '201234567890';
+</script>
+<link rel="stylesheet" href="./styles.css">
+<script src="./widget.js"></script>
+-->
+
+
+<!-- USAGE EXAMPLES -->
+<script>
+// Open chat (Live Chat / WhatsApp-style support)
+// JanssenChat.open();
+
+// Close chat
+// JanssenChat.close();
+
+// Set language
+// JanssenChat.setLanguage('ar'); // or 'en'
+
+// Send message programmatically
+// JanssenChat.sendMessage('مرحبا');
+
+// Check if escalated to human
+// console.log(JanssenChat.isLocked());
+</script>

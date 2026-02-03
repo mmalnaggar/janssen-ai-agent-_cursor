@@ -1,0 +1,71 @@
+{
+  "name": "Janssen_Analytics_API",
+  "nodes": [
+    {
+      "id": "webhook_stats",
+      "name": "1_Stats_Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [100, 400],
+      "parameters": {
+        "path": "janssen-stats",
+        "httpMethod": "GET",
+        "responseMode": "responseNode"
+      }
+    },
+    {
+      "id": "get_sheets_data",
+      "name": "2_Get_Conversations",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [350, 400],
+      "parameters": {
+        "operation": "getRows",
+        "documentId": { "__rl": true, "mode": "id", "value": "YOUR_GOOGLE_SHEET_ID" },
+        "sheetName": { "__rl": true, "mode": "name", "value": "Conversations" },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE_WITH_YOUR_GOOGLE_CREDENTIAL_ID",
+          "name": "Google Sheets"
+        }
+      }
+    },
+    {
+      "id": "calculate_stats",
+      "name": "3_Calculate_Stats",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [600, 400],
+      "parameters": {
+        "jsCode": "const rows = $input.all().map(i => i.json);\n\n// Date filters\nconst now = new Date();\nconst today = now.toISOString().split('T')[0];\nconst weekAgo = new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];\nconst monthAgo = new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];\n\n// Filter functions\nconst isToday = (ts) => ts && ts.startsWith(today);\nconst isThisWeek = (ts) => ts && ts >= weekAgo;\nconst isThisMonth = (ts) => ts && ts >= monthAgo;\n\n// Calculate metrics\nconst totalConversations = rows.length;\nconst todayConversations = rows.filter(r => isToday(r.timestamp)).length;\nconst weekConversations = rows.filter(r => isThisWeek(r.timestamp)).length;\nconst monthConversations = rows.filter(r => isThisMonth(r.timestamp)).length;\n\n// By channel\nconst byChannel = {};\nrows.forEach(r => {\n  const ch = r.channel || 'unknown';\n  byChannel[ch] = (byChannel[ch] || 0) + 1;\n});\n\n// By intent\nconst byIntent = {};\nrows.forEach(r => {\n  const intent = r.intent || 'GENERAL';\n  byIntent[intent] = (byIntent[intent] || 0) + 1;\n});\n\n// By agent\nconst byAgent = {};\nrows.forEach(r => {\n  const agent = r.agent_used || 'support';\n  byAgent[agent] = (byAgent[agent] || 0) + 1;\n});\n\n// Escalation rate (normalize from Sheets: boolean or string \"true\"/\"false\")\nconst isEscalated = (r) => { const e = r.escalated; if (e === true) return true; if (typeof e === 'string') return e.toLowerCase() === 'true' || e === '1'; return e === 1; };\nconst escalated = rows.filter(r => isEscalated(r)).length;\nconst escalationRate = totalConversations > 0 ? (escalated / totalConversations * 100).toFixed(1) : 0;\n\n// Language split\nconst arabicCount = rows.filter(r => r.language === 'ar').length;\nconst englishCount = rows.filter(r => r.language === 'en').length;\n\n// Average confidence\nconst confidences = rows.map(r => parseFloat(r.confidence) || 0).filter(c => c > 0);\nconst avgConfidence = confidences.length > 0 \n  ? (confidences.reduce((a, b) => a + b, 0) / confidences.length * 100).toFixed(1)\n  : 0;\n\n// Top intents (sorted)\nconst topIntents = Object.entries(byIntent)\n  .sort((a, b) => b[1] - a[1])\n  .slice(0, 5)\n  .map(([intent, count]) => ({ intent, count, percentage: (count / totalConversations * 100).toFixed(1) }));\n\nreturn {\n  json: {\n    generated_at: now.toISOString(),\n    summary: {\n      total_conversations: totalConversations,\n      today: todayConversations,\n      this_week: weekConversations,\n      this_month: monthConversations,\n      escalation_rate: escalationRate + '%',\n      avg_confidence: avgConfidence + '%'\n    },\n    by_channel: byChannel,\n    by_agent: byAgent,\n    by_intent: byIntent,\n    top_intents: topIntents,\n    language_split: {\n      arabic: arabicCount,\n      english: englishCount,\n      arabic_percentage: totalConversations > 0 ? (arabicCount / totalConversations * 100).toFixed(1) + '%' : '0%'\n    },\n    escalations: {\n      total: escalated,\n      rate: escalationRate + '%'\n    }\n  }\n};"
+      }
+    },
+    {
+      "id": "respond",
+      "name": "4_Return_Stats",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [850, 400],
+      "parameters": {
+        "respondWith": "allIncomingItems",
+        "options": { "responseCode": 200 }
+      }
+    }
+  ],
+  "connections": {
+    "1_Stats_Webhook": {
+      "main": [[{ "node": "2_Get_Conversations", "type": "main", "index": 0 }]]
+    },
+    "2_Get_Conversations": {
+      "main": [[{ "node": "3_Calculate_Stats", "type": "main", "index": 0 }]]
+    },
+    "3_Calculate_Stats": {
+      "main": [[{ "node": "4_Return_Stats", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "janssen-ai" }, { "name": "analytics" }],
+  "meta": { "version": "1.0.0", "description": "GET /webhook/janssen-stats – returns conversation stats from Google Sheets for dashboard." }
+}

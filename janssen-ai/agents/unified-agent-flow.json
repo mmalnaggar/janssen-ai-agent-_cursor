@@ -1,0 +1,651 @@
+{
+  "_meta": {
+    "flow_name": "Janssen_Unified_Agent_Flow",
+    "version": "2.0.0",
+    "status": "production-ready",
+    "description": "Unified conversation flow for all Janssen AI agents across chat, voice, and WhatsApp channels",
+    "consumers": ["shopify_widget", "vapi_voice", "n8n_orchestration", "whatsapp_api"],
+    "last_updated": "2024-01-15"
+  },
+
+  "_comments": {
+    "purpose": "Routes user messages to specialized agents and returns unified responses",
+    "agents_path": "/agents/*.agent.json",
+    "safety_rules": [
+      "One agent per turn - no chaining",
+      "Escalation is terminal - ends AI handling",
+      "Never auto-resolve complaints or warranty claims",
+      "Always log decisions to agents_log"
+    ]
+  },
+
+  "input_schema": {
+    "_comment": "Required input structure for all channels",
+    "required": {
+      "session_id": {
+        "type": "string",
+        "description": "Unique conversation session identifier"
+      },
+      "channel": {
+        "type": "string",
+        "enum": ["chat", "voice", "whatsapp"],
+        "description": "Source channel of the message"
+      },
+      "language": {
+        "type": "string",
+        "enum": ["ar", "en"],
+        "default": "ar",
+        "description": "Customer language preference"
+      },
+      "user_message": {
+        "type": "string",
+        "description": "Customer message text (or voice transcript)"
+      }
+    },
+    "optional": {
+      "metadata": {
+        "type": "object",
+        "properties": {
+          "phone": "Customer phone number",
+          "name": "Customer name if known",
+          "previous_intent": "Last detected intent",
+          "conversation_turn": "Current turn number",
+          "customer_sentiment": "positive | neutral | negative",
+          "voice_confidence": "ASR confidence score for voice"
+        }
+      }
+    }
+  },
+
+  "output_schema": {
+    "_comment": "Unified response structure for all channels",
+    "response_type": {
+      "type": "string",
+      "enum": ["text", "product_card", "handover"],
+      "description": "Type of response to render"
+    },
+    "content": {
+      "type": "object",
+      "properties": {
+        "text": "Response text in customer language",
+        "product": "Product card object if response_type is product_card",
+        "handover_message": "Escalation message if response_type is handover"
+      }
+    },
+    "next_action": {
+      "type": "string",
+      "enum": ["await_response", "end_conversation", "transfer_to_human", "show_options"],
+      "description": "What the channel should do next"
+    },
+    "agent_used": {
+      "type": "string",
+      "enum": ["sales", "support", "warranty", "complaint", "escalation"],
+      "description": "Agent that handled this turn"
+    },
+    "confidence_score": {
+      "type": "number",
+      "min": 0,
+      "max": 1,
+      "description": "Intent detection confidence"
+    }
+  },
+
+  "flow_steps": [
+    {
+      "id": "step_01_receive_input",
+      "name": "Receive Input",
+      "type": "input",
+      "_comment": "Entry point - receives message from any channel (chat, voice, whatsapp)",
+      "accepts": ["session_id", "channel", "language", "user_message", "metadata"],
+      "validation": {
+        "session_id": "required, non-empty string",
+        "channel": "required, one of [chat, voice, whatsapp]",
+        "language": "optional, defaults to 'ar'",
+        "user_message": "required, non-empty string"
+      },
+      "on_invalid": {
+        "action": "return_error",
+        "error_code": "INVALID_INPUT"
+      },
+      "next": "step_02_normalize_input"
+    },
+
+    {
+      "id": "step_02_normalize_input",
+      "name": "Normalize Input",
+      "type": "processing",
+      "_comment": "Cleans and prepares input for intent detection",
+      "operations": [
+        {
+          "action": "trim_whitespace",
+          "target": "user_message"
+        },
+        {
+          "action": "detect_language_if_missing",
+          "logic": "Check for Arabic characters (Unicode range 0600-06FF)",
+          "default": "ar"
+        },
+        {
+          "action": "normalize_arabic",
+          "logic": "Normalize Arabic text (remove diacritics, normalize alef/yeh)"
+        },
+        {
+          "action": "lowercase_english",
+          "logic": "Lowercase English text for matching"
+        },
+        {
+          "action": "extract_metadata",
+          "fields": ["phone", "name", "previous_intent"]
+        }
+      ],
+      "output": {
+        "normalized_message": "Cleaned message text",
+        "detected_language": "ar | en",
+        "session_context": "Extracted metadata"
+      },
+      "next": "step_03_detect_intent"
+    },
+
+    {
+      "id": "step_03_detect_intent",
+      "name": "Detect Intent",
+      "type": "processing",
+      "_comment": "Classifies user intent using keyword matching from agent trigger definitions",
+      "intent_categories": [
+        {
+          "intent": "COMPLAINT",
+          "priority": 1,
+          "_comment": "Highest priority - complaints must be caught first",
+          "keywords_ar": ["شكوى", "مشكلة", "زعلان", "مش راضي", "سيء", "وحش", "اسوء", "عايز فلوسي", "استرجاع", "ندمان", "غلط", "كذب"],
+          "keywords_en": ["complaint", "problem", "angry", "not satisfied", "bad", "terrible", "worst", "refund", "return", "regret", "wrong", "lied"],
+          "routes_to": "complaint"
+        },
+        {
+          "intent": "HUMAN_REQUEST",
+          "priority": 2,
+          "_comment": "Explicit human request - immediate escalation",
+          "keywords_ar": ["عايز اتكلم مع حد", "حد يرد عليا", "موظف", "خدمة عملاء", "بني آدم", "حد حقيقي", "مدير", "مسؤول"],
+          "keywords_en": ["talk to someone", "speak to agent", "human", "customer service", "real person", "manager", "supervisor"],
+          "routes_to": "escalation"
+        },
+        {
+          "intent": "WARRANTY",
+          "priority": 3,
+          "_comment": "Warranty-related queries",
+          "keywords_ar": ["ضمان", "مدة الضمان", "تفعيل الضمان", "شهادة ضمان", "تصليح", "صيانة", "عيب صناعة"],
+          "keywords_en": ["warranty", "guarantee", "activate warranty", "warranty certificate", "repair", "maintenance", "defect"],
+          "routes_to": "warranty"
+        },
+        {
+          "intent": "SALES_PRICE",
+          "priority": 4,
+          "_comment": "Pricing inquiries",
+          "keywords_ar": ["سعر", "بكام", "كام", "تكلفة", "عروض", "خصم", "تقسيط"],
+          "keywords_en": ["price", "cost", "how much", "offers", "discount", "installment"],
+          "routes_to": "sales"
+        },
+        {
+          "intent": "SALES_RECOMMENDATION",
+          "priority": 5,
+          "_comment": "Product recommendation requests",
+          "keywords_ar": ["عايز اشتري", "عايز مرتبة", "انصحني", "ايه احسن", "افضل", "اختار", "مقاسات", "انواع"],
+          "keywords_en": ["buy", "purchase", "recommend", "suggest", "best", "which one", "sizes", "types"],
+          "routes_to": "sales"
+        },
+        {
+          "intent": "DELIVERY",
+          "priority": 6,
+          "_comment": "Delivery inquiries",
+          "keywords_ar": ["توصيل", "شحن", "يوصل امتى", "مدة التوصيل", "رسوم الشحن"],
+          "keywords_en": ["delivery", "shipping", "when arrive", "delivery time", "shipping cost"],
+          "routes_to": "support"
+        },
+        {
+          "intent": "GENERAL_SUPPORT",
+          "priority": 7,
+          "_comment": "General questions - default fallback",
+          "keywords_ar": ["فين الفرع", "عنوان", "مواعيد", "رقم التليفون", "سؤال", "استفسار", "معلومات", "ازاي"],
+          "keywords_en": ["store location", "address", "working hours", "phone number", "question", "inquiry", "information", "how to"],
+          "routes_to": "support"
+        }
+      ],
+      "matching_logic": {
+        "_comment": "How to match intents",
+        "method": "keyword_scan",
+        "priority_order": "Lower number = higher priority. First match wins.",
+        "confidence_calculation": "Number of matched keywords / total keywords in category",
+        "minimum_confidence": 0.3,
+        "fallback_intent": "GENERAL_SUPPORT",
+        "fallback_agent": "support"
+      },
+      "output": {
+        "detected_intent": "Intent category string",
+        "confidence_score": "0.0 to 1.0",
+        "matched_keywords": "Array of matched keywords",
+        "target_agent": "Agent name to route to"
+      },
+      "next": "step_04_select_agent"
+    },
+
+    {
+      "id": "step_04_select_agent",
+      "name": "Select Agent",
+      "type": "routing",
+      "_comment": "Loads agent configuration and validates agent is available",
+      "agent_mapping": {
+        "sales": {
+          "config_file": "/agents/sales.agent.json",
+          "handles": ["SALES_PRICE", "SALES_RECOMMENDATION"]
+        },
+        "support": {
+          "config_file": "/agents/support.agent.json",
+          "handles": ["DELIVERY", "GENERAL_SUPPORT"]
+        },
+        "warranty": {
+          "config_file": "/agents/warranty.agent.json",
+          "handles": ["WARRANTY"]
+        },
+        "complaint": {
+          "config_file": "/agents/complaint.agent.json",
+          "handles": ["COMPLAINT"]
+        },
+        "escalation": {
+          "config_file": "/agents/escalation.agent.json",
+          "handles": ["HUMAN_REQUEST"]
+        }
+      },
+      "safety_rules": {
+        "_comment": "Only one agent per turn to prevent confusion",
+        "single_agent_per_turn": true,
+        "no_agent_chaining": true
+      },
+      "output": {
+        "selected_agent": "Agent name",
+        "agent_config": "Full agent configuration object"
+      },
+      "next": "step_05_pre_execution_check"
+    },
+
+    {
+      "id": "step_05_pre_execution_check",
+      "name": "Pre-Execution Safety Check",
+      "type": "decision",
+      "_comment": "Check if immediate escalation is needed before agent execution",
+      "immediate_escalation_triggers": [
+        {
+          "trigger": "legal_threat",
+          "keywords_ar": ["محامي", "قانون", "شرطة", "نيابة", "قضية"],
+          "keywords_en": ["lawyer", "legal", "police", "sue", "court"],
+          "action": "force_escalation"
+        },
+        {
+          "trigger": "media_threat",
+          "keywords_ar": ["هنشر", "فيسبوك", "سوشيال ميديا", "جرنال"],
+          "keywords_en": ["post", "facebook", "social media", "review"],
+          "action": "force_escalation"
+        },
+        {
+          "trigger": "vip_customer",
+          "condition": "metadata.customer_tier == 'vip'",
+          "action": "force_escalation"
+        }
+      ],
+      "branches": {
+        "force_escalation": "step_08_escalate",
+        "continue": "step_06_execute_agent"
+      },
+      "next": "step_06_execute_agent"
+    },
+
+    {
+      "id": "step_06_execute_agent",
+      "name": "Execute Agent",
+      "type": "processing",
+      "_comment": "Run the selected agent with user message and context",
+      "execution": {
+        "input_to_agent": {
+          "user_message": "From normalized input",
+          "language": "Detected language",
+          "session_context": "Conversation history and metadata",
+          "agent_config": "Agent's allowed actions, tone, rules"
+        },
+        "agent_responsibilities": {
+          "sales": [
+            "Fetch product information from database",
+            "Provide prices from prices table",
+            "Recommend products based on needs",
+            "Capture leads when purchase intent detected"
+          ],
+          "support": [
+            "Answer FAQs from knowledge base",
+            "Provide delivery information from delivery_rules",
+            "Share store locations",
+            "Explain processes and policies"
+          ],
+          "warranty": [
+            "Explain warranty policies from warranty_policies table",
+            "Guide warranty activation process",
+            "Collect claim details for escalation",
+            "Check warranty status if invoice provided"
+          ],
+          "complaint": [
+            "Acknowledge complaint with empathy",
+            "Validate customer feelings",
+            "Collect complaint details systematically",
+            "De-escalate with apologetic tone"
+          ],
+          "escalation": [
+            "Summarize conversation context",
+            "Route to appropriate human queue",
+            "Provide wait time estimate",
+            "Offer callback if no agents available"
+          ]
+        }
+      },
+      "forbidden_actions": {
+        "_comment": "Actions that are NEVER allowed",
+        "global": [
+          "Invent information not in database",
+          "Make promises about delivery dates",
+          "Approve or reject warranty claims",
+          "Offer unauthorized discounts",
+          "Make legal statements",
+          "Argue with customer"
+        ],
+        "complaint_specific": [
+          "Dismiss or minimize complaint",
+          "Blame customer",
+          "Promise refunds without escalation"
+        ],
+        "warranty_specific": [
+          "Approve warranty claim",
+          "Reject warranty claim",
+          "Promise free replacement"
+        ]
+      },
+      "response_generation": {
+        "use_agent_tone": true,
+        "tone_lookup": "agent_config.tone[language]",
+        "max_response_length": 500,
+        "include_product_card": "When relevant product mentioned by sales agent"
+      },
+      "output": {
+        "agent_response": "Generated response text or product card",
+        "response_type": "text | product_card",
+        "actions_taken": "Array of actions performed",
+        "data_fetched": "Data retrieved from database"
+      },
+      "next": "step_07_check_escalation"
+    },
+
+    {
+      "id": "step_07_check_escalation",
+      "name": "Check Escalation Rules",
+      "type": "decision",
+      "_comment": "Evaluate if the agent response requires escalation to human",
+      "escalation_conditions": {
+        "_comment": "Conditions that trigger escalation after agent execution",
+        "from_agent_config": "Check agent.escalation_rules.conditions",
+        "universal_triggers": [
+          {
+            "condition": "agent_used == 'complaint'",
+            "description": "All complaints escalate after empathy and detail collection",
+            "action": "escalate_after_response"
+          },
+          {
+            "condition": "agent_used == 'warranty' && intent == 'WARRANTY_CLAIM'",
+            "description": "Warranty claims always need human decision",
+            "action": "escalate_after_response"
+          },
+          {
+            "condition": "confidence_score < 0.3",
+            "description": "Low confidence means uncertain, better to escalate",
+            "action": "escalate_immediately"
+          },
+          {
+            "condition": "conversation_turn >= 5 && !issue_resolved",
+            "description": "Long conversation without resolution",
+            "action": "escalate_immediately"
+          },
+          {
+            "condition": "sentiment == 'negative' && sentiment_score < -0.7",
+            "description": "Very negative sentiment detected",
+            "action": "escalate_immediately"
+          }
+        ]
+      },
+      "escalation_modes": {
+        "escalate_immediately": {
+          "_comment": "Interrupt current response and escalate now",
+          "discard_agent_response": true,
+          "next": "step_08_escalate"
+        },
+        "escalate_after_response": {
+          "_comment": "Deliver agent response, then escalate",
+          "deliver_agent_response": true,
+          "append_escalation": true,
+          "next": "step_08_escalate"
+        },
+        "no_escalation": {
+          "_comment": "Continue normal flow",
+          "next": "step_09_format_response"
+        }
+      },
+      "output": {
+        "escalation_required": "boolean",
+        "escalation_mode": "immediately | after_response | none",
+        "escalation_reason": "Reason for escalation"
+      }
+    },
+
+    {
+      "id": "step_08_escalate",
+      "name": "Escalate to Human",
+      "type": "terminal",
+      "_comment": "TERMINAL - Escalation ends AI handling. Human takes over.",
+      "is_terminal": true,
+      "escalation_process": [
+        {
+          "step": 1,
+          "action": "generate_summary",
+          "description": "Create conversation summary for human agent",
+          "include": [
+            "session_id",
+            "customer_phone",
+            "customer_name",
+            "channel",
+            "language",
+            "conversation_history",
+            "intents_detected",
+            "escalation_reason",
+            "customer_sentiment"
+          ]
+        },
+        {
+          "step": 2,
+          "action": "select_queue",
+          "description": "Route to appropriate human queue",
+          "queue_mapping": {
+            "complaint": "complaints_queue",
+            "warranty": "warranty_queue",
+            "sales": "sales_queue",
+            "default": "support_queue"
+          },
+          "priority_assignment": {
+            "legal_threat": "critical",
+            "media_threat": "critical",
+            "vip_customer": "high",
+            "angry_customer": "high",
+            "default": "normal"
+          }
+        },
+        {
+          "step": 3,
+          "action": "send_escalation_message",
+          "messages": {
+            "ar": "هحولك دلوقتي لأحد موظفين خدمة العملاء اللي هيقدر يساعدك أكتر. استنى لحظة من فضلك.",
+            "en": "I'm connecting you now to one of our customer service representatives who can help you further. Please hold."
+          }
+        },
+        {
+          "step": 4,
+          "action": "transfer_context",
+          "description": "Pass full context to human agent system"
+        }
+      ],
+      "output": {
+        "response_type": "handover",
+        "content": {
+          "handover_message": "Escalation message in customer language",
+          "queue_assigned": "Target queue name",
+          "estimated_wait": "Estimated wait time if available"
+        },
+        "next_action": "transfer_to_human",
+        "agent_used": "escalation",
+        "confidence_score": 1.0
+      },
+      "safety": {
+        "_comment": "Escalation is terminal - no further AI processing",
+        "ai_processing_ends": true,
+        "human_takes_over": true,
+        "no_return_to_ai": true
+      }
+    },
+
+    {
+      "id": "step_09_format_response",
+      "name": "Format Response",
+      "type": "processing",
+      "_comment": "Format response for the specific channel",
+      "channel_formatting": {
+        "chat": {
+          "format": "html",
+          "supports_product_cards": true,
+          "supports_quick_replies": true,
+          "max_length": null
+        },
+        "voice": {
+          "format": "ssml",
+          "supports_product_cards": false,
+          "supports_quick_replies": false,
+          "max_length": 200,
+          "strip_emojis": true
+        },
+        "whatsapp": {
+          "format": "whatsapp_template",
+          "supports_product_cards": true,
+          "supports_quick_replies": true,
+          "max_length": 4096
+        }
+      },
+      "transformations": {
+        "text_response": {
+          "apply_formatting": "Based on channel",
+          "ensure_rtl": "If language is 'ar'"
+        },
+        "product_card_response": {
+          "include_fields": ["name", "description", "price", "image_url", "warranty"],
+          "actions": ["view_product", "add_to_cart"],
+          "localize": "Based on language"
+        }
+      },
+      "output": {
+        "formatted_response": "Channel-appropriate response object"
+      },
+      "next": "step_10_log_and_return"
+    },
+
+    {
+      "id": "step_10_log_and_return",
+      "name": "Log and Return",
+      "type": "output",
+      "_comment": "Log interaction and return final response",
+      "logging": {
+        "destinations": ["agents_log", "crm_sync_queue"],
+        "log_entry": {
+          "session_id": "From input",
+          "conversation_id": "From database lookup",
+          "agent_name": "Selected agent",
+          "action_type": "Action performed",
+          "intent_received": "Detected intent",
+          "input_text": "User message",
+          "output_text": "Agent response",
+          "data_fetched": "Data retrieved (JSON)",
+          "response_time_ms": "Processing duration",
+          "success": true,
+          "escalated": "boolean",
+          "created_at": "Timestamp"
+        },
+        "crm_event": {
+          "event_type": "AI_DECISION",
+          "priority": "Based on escalation status"
+        }
+      },
+      "final_output": {
+        "response_type": "text | product_card | handover",
+        "content": {
+          "text": "Response text in customer language",
+          "product": "Product card if applicable",
+          "handover_message": "Escalation message if applicable"
+        },
+        "next_action": "await_response | end_conversation | transfer_to_human | show_options",
+        "agent_used": "Agent that handled this turn",
+        "confidence_score": "Intent detection confidence"
+      },
+      "is_terminal": true
+    }
+  ],
+
+  "error_handling": {
+    "_comment": "How to handle errors at each stage",
+    "strategies": {
+      "input_validation_error": {
+        "action": "return_error",
+        "response_ar": "معلش، مقدرتش أفهم الرسالة. ممكن تعيد تاني؟",
+        "response_en": "Sorry, I couldn't understand that. Could you please try again?"
+      },
+      "intent_detection_failure": {
+        "action": "fallback_to_support",
+        "agent": "support",
+        "intent": "GENERAL_SUPPORT"
+      },
+      "agent_execution_error": {
+        "action": "escalate_with_apology",
+        "response_ar": "معلش، حصل مشكلة تقنية. هحولك لحد يساعدك.",
+        "response_en": "Sorry, there was a technical issue. Let me connect you with someone who can help."
+      },
+      "database_error": {
+        "action": "respond_without_data",
+        "response_ar": "مش قادر أجيب المعلومات دلوقتي. ممكن تحاول تاني بعد شوية؟",
+        "response_en": "I can't retrieve the information right now. Could you try again in a moment?"
+      },
+      "timeout": {
+        "action": "escalate_immediately",
+        "threshold_ms": 10000
+      }
+    }
+  },
+
+  "extensions": {
+    "_comment": "Extension points for future features",
+    "voice_integration": {
+      "vapi_webhook": "To be configured",
+      "asr_provider": "To be configured",
+      "tts_provider": "To be configured"
+    },
+    "crm_integration": {
+      "sync_endpoint": "To be configured",
+      "events_to_sync": ["conversation_created", "message_logged", "escalation", "conversation_closed"]
+    },
+    "analytics": {
+      "tracking_enabled": true,
+      "metrics": [
+        "intent_distribution",
+        "agent_utilization",
+        "escalation_rate",
+        "average_response_time",
+        "resolution_rate"
+      ]
+    }
+  }
+}

@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Janssen AI – Webhook Test</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #1a1a1a;
+      color: #f5f5f5;
+      padding: 24px;
+      max-width: 640px;
+      margin: 0 auto;
+    }
+    h1 { font-size: 20px; margin-bottom: 8px; color: #C41E3A; }
+    p { margin-bottom: 16px; color: #a3a3a3; font-size: 14px; }
+    label { display: block; margin-bottom: 6px; font-size: 13px; }
+    input, select {
+      width: 100%;
+      padding: 10px 12px;
+      margin-bottom: 12px;
+      border: 1px solid #525252;
+      border-radius: 8px;
+      background: #2d2d2d;
+      color: #f5f5f5;
+      font-size: 14px;
+    }
+    button {
+      padding: 12px 24px;
+      background: #C41E3A;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    button:hover { background: #A01830; }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
+    #result {
+      margin-top: 20px;
+      padding: 16px;
+      background: #2d2d2d;
+      border-radius: 8px;
+      border: 1px solid #525252;
+      white-space: pre-wrap;
+      font-family: monospace;
+      font-size: 12px;
+      min-height: 80px;
+    }
+    .ok { color: #22c55e; }
+    .err { color: #ef4444; }
+  </style>
+</head>
+<body>
+  <h1>Janssen AI – Webhook Test</h1>
+  <p>Use this page to test your n8n webhook without the full chat UI. Set your webhook URL below.</p>
+
+  <label for="webhook">Webhook URL (e.g. https://your-n8n.onrender.com/webhook/janssen-ai-incoming)</label>
+  <input type="url" id="webhook" placeholder="https://....onrender.com/webhook/janssen-ai-incoming" />
+
+  <label for="message">Message</label>
+  <input type="text" id="message" value="بكام المرتبة" placeholder="User message" />
+
+  <label for="lang">Language</label>
+  <select id="lang">
+    <option value="ar">Arabic (ar)</option>
+    <option value="en">English (en)</option>
+  </select>
+
+  <button type="button" id="send">Send to webhook</button>
+
+  <div id="result">Response will appear here.</div>
+
+  <script>
+    (function() {
+      var webhookInput = document.getElementById('webhook');
+      var messageInput = document.getElementById('message');
+      var langSelect = document.getElementById('lang');
+      var sendBtn = document.getElementById('send');
+      var resultDiv = document.getElementById('result');
+
+      // Pre-fill from global if set (e.g. from demo)
+      if (window.JANSSEN_WEBHOOK_URL) {
+        webhookInput.value = window.JANSSEN_WEBHOOK_URL;
+      }
+
+      function showResult(text, isError) {
+        resultDiv.textContent = text;
+        resultDiv.className = isError ? 'err' : 'ok';
+      }
+
+      sendBtn.addEventListener('click', function() {
+        var url = webhookInput.value.trim();
+        if (!url) {
+          showResult('Please set the webhook URL.', true);
+          return;
+        }
+        var payload = {
+          session_id: 'test_' + Date.now(),
+          user_message: messageInput.value.trim() || 'مرحبا',
+          channel: 'chat',
+          language: langSelect.value
+        };
+        showResult('Sending...');
+        sendBtn.disabled = true;
+
+        fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        })
+          .then(function(r) {
+            return r.json().then(function(data) {
+              return { ok: r.ok, status: r.status, data: data };
+            }).catch(function() {
+              return { ok: r.ok, status: r.status, data: r.statusText };
+            });
+          })
+          .then(function(out) {
+            var text = 'Status: ' + out.status + '\n\n' + JSON.stringify(out.data, null, 2);
+            showResult(text, !out.ok);
+          })
+          .catch(function(e) {
+            showResult('Error: ' + e.message, true);
+          })
+          .finally(function() {
+            sendBtn.disabled = false;
+          });
+      });
+    })();
+  </script>
+</body>
+</html>
