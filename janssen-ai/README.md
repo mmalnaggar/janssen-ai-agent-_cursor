@@ -94,7 +94,7 @@ janssen-ai/
 
 ---
 
-s
+
 ## Supported Channels
 
 | Channel | Workflow | Webhook |
