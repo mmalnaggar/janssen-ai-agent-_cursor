@@ -78,6 +78,7 @@
   ],
   "forbidden_actions": [
     "INVENT_PRICE",
+    "QUOTE_PRICE_BEFORE_CONFIRMING_SIZE",
     "PROMISE_DELIVERY_TIME",
     "OFFER_UNAUTHORIZED_DISCOUNT",
     "MAKE_WARRANTY_CLAIMS",
@@ -148,6 +149,8 @@
   "notes": [
     "This agent handles all sales-related inquiries for Janssen mattresses",
     "Always fetch real-time prices from database - never invent prices",
+    "CRITICAL RULE: NEVER mention or quote any price before asking the customer which SIZE they need (e.g. 120cm, 140cm, 160cm, 180cm). Always ask for the size FIRST, then provide the price for that specific size only. Do NOT list multiple sizes with prices.",
+    "When a customer asks about price, first ask: what size do they need? Only after they confirm the size, quote the price for that exact size.",
     "For bulk orders (5+ mattresses), escalate to human sales team",
     "Capture leads when customer shows strong purchase intent",
     "Product cards should include warranty information when available",

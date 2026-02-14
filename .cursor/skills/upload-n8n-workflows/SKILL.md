@@ -42,7 +42,8 @@ If any of these assumptions are wrong or missing, the agent should:
 ### Where to check
 
 - **Credentials file**: `.cursor/skills/upload-n8n-workflows/n8n-credentials.env` (relative to workspace root).
-- **Required variables**: the file must define `N8N_BASE_URL` and `N8N_API_KEY` (check variable names only; never read or display the API key value).
+- **Required variables**: the file must define `N8N_BASE_URL` and `N8N_API_KEY` (check variable names only; **never** read or display the API key value).
+- **Example file**: `n8n-credentials.env.example` in the same folder shows the required variable names; copy to `n8n-credentials.env` and fill in. The real credentials file is gitignored.
 
 ### If credentials EXIST
 
@@ -52,12 +53,25 @@ If any of these assumptions are wrong or missing, the agent should:
   2. Offer the available options (see workflow list below) so they can choose by name.
   3. Run the upload directly: source the credentials file, then `curl -X POST` with the chosen workflow file. Use the workspace path to the JSON (e.g. `janssen-ai/n8n/<name>.json` or `janssen-ai/backend/workflows/<name>.json`).
 
-**Available workflows** (use these names when asking):
+**Available workflows** (use these names when asking; paths are relative to `janssen-ai/`):
 
-- **n8n/**  
-  `governance-validation-workflow`, `janssen-ai-blueprint`, `janssen-ai-full-v2`, `janssen-ai-full`, `janssen-ai-production`, `janssen-ai-with-openai`, `janssen-analytics-dashboard`, `janssen-complete-system`, `janssen-crm-integration`, `janssen-unified-workflow`, `janssen-voice-integration`, `janssen-whatsapp-workflow`
-- **backend/workflows/**  
-  `avaya.voice.flow`, `crm.integration.flow`, `n8n.main.workflow`
+| User choice | File path (under `janssen-ai/`) |
+|-------------|----------------------------------|
+| governance-validation-workflow | n8n/governance-validation-workflow.json |
+| janssen-ai-blueprint | n8n/janssen-ai-blueprint.json |
+| janssen-ai-full-v2 | n8n/janssen-ai-full-v2.json |
+| janssen-ai-full | n8n/janssen-ai-full.json |
+| janssen-ai-production | n8n/janssen-ai-production.json |
+| janssen-ai-with-openai | n8n/janssen-ai-with-openai.json |
+| janssen-analytics-dashboard | n8n/janssen-analytics-dashboard.json |
+| janssen-complete-system | n8n/janssen-complete-system.json |
+| janssen-crm-integration | n8n/janssen-crm-integration.json |
+| janssen-unified-workflow | n8n/janssen-unified-workflow.json |
+| janssen-voice-integration | n8n/janssen-voice-integration.json |
+| janssen-whatsapp-workflow | n8n/janssen-whatsapp-workflow.json |
+| avaya.voice.flow | backend/workflows/avaya.voice.flow.json |
+| crm.integration.flow | backend/workflows/crm.integration.flow.json |
+| n8n.main.workflow | backend/workflows/n8n.main.workflow.json |
 
 Example upload command once the user picks a workflow (e.g. `janssen-whatsapp-workflow`):
 
@@ -71,7 +85,7 @@ curl -sS -X POST \
   "$N8N_BASE_URL/rest/workflows"
 ```
 
-(Replace the path with the chosen workflow file; `WORKSPACE_ROOT` is the workspace root path.)
+(Replace the path with the chosen workflow file. Use the table above to map the user's choice to the path under `janssen-ai/`. `WORKSPACE_ROOT` is the workspace root—the directory that contains both `janssen-ai/` and `.cursor/`.)
 
 ### If credentials do NOT exist
 
@@ -79,10 +93,11 @@ curl -sS -X POST \
   1. Ask the user for:
      - **N8N_BASE_URL** (n8n instance URL, no trailing slash).
      - **N8N_API_KEY** (from n8n: Settings → Personal Access Tokens).
-  2. Suggest they create or fill `.cursor/skills/upload-n8n-workflows/n8n-credentials.env` with:
-     - `N8N_BASE_URL="https://YOUR-N8N-URL"`
-     - `N8N_API_KEY="YOUR_API_KEY"`
-  3. Tell them to re-run the skill once the file is in place; then the agent will only ask for the workflow name and upload.
+  2. Suggest they copy `n8n-credentials.env.example` to `n8n-credentials.env` in the same folder and fill in:
+     - `N8N_BASE_URL="https://YOUR-N8N-URL"` (no trailing slash)
+     - `N8N_API_KEY="YOUR_API_KEY"` (from n8n: Settings → Personal Access Tokens)
+  3. Remind them that `n8n-credentials.env` is gitignored and must never be committed.
+  4. Tell them to re-run the skill once the file is in place; then the agent will only ask for the workflow name and upload.
 - Do **not** paste or log the API key; only refer to the env file and variable names.
 
 ---
@@ -137,10 +152,13 @@ When the user asks to upload/init Janssen workflows to n8n:
 
 ### Batch upload (only when user explicitly requests it)
 
+Run from workspace root so that `janssen-ai` and `.cursor` are in scope:
+
 ```bash
 cd janssen-ai
 source "../.cursor/skills/upload-n8n-workflows/n8n-credentials.env"
 for file in n8n/*.json backend/workflows/*.json; do
+  [ -f "$file" ] || continue
   echo "Uploading $file ..."
   curl -sS -X POST \
     -H "X-N8N-API-KEY: $N8N_API_KEY" \
@@ -194,6 +212,7 @@ When the user asks to **upload/init/sync workflows**:
 2. **If credentials exist**: ask only **"Which workflow do you want to upload?"** and offer the workflow list; then run the upload (source env + curl) for the chosen file. Do not show the full procedure, list endpoint, or batch commands unless the user explicitly asks.
 3. **If credentials do not exist**: ask for `N8N_BASE_URL` and `N8N_API_KEY`, suggest creating the env file, and stop; do not show upload commands until credentials are in place.
 4. **Never** print or log API keys; always use the env file and `$N8N_API_KEY` in commands.
+5. **Security**: `n8n-credentials.env` is listed in `.cursor/skills/upload-n8n-workflows/.gitignore`; remind users not to commit it.
 
 ---
 
@@ -222,3 +241,21 @@ Agent:
 
 User: "Upload all Janssen workflows to n8n."
 Agent: If credentials exist, asks to confirm "all" (or runs the batch loop). If credentials are missing, runs the credential flow first.
+
+---
+
+## Implemented test script
+
+A script in this folder implements the skill and can be run locally to test:
+
+- **Path**: `.cursor/skills/upload-n8n-workflows/upload-workflow.sh`
+- **Usage**:
+  - `bash upload-workflow.sh` — test connection (GET /rest/workflows). Requires valid `n8n-credentials.env`.
+  - `bash upload-workflow.sh <workflow-name>` — upload one workflow (e.g. `janssen-ai-production`, `janssen-whatsapp-workflow`).
+- **Behavior**:
+  1. Checks that `n8n-credentials.env` exists and defines `N8N_BASE_URL` and `N8N_API_KEY`.
+  2. Rejects placeholder values (`your-n8n-instance.com` / `your_n8n_api_key_here`).
+  3. With no argument: calls n8n API to list workflows (connection test).
+  4. With workflow name: maps name to file under `janssen-ai/` and POSTs to `$N8N_BASE_URL/rest/workflows`.
+
+Run from workspace root or from the skill folder. The script resolves the workspace root and `janssen-ai` path automatically.
