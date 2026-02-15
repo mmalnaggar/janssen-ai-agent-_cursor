@@ -1,4 +1,6 @@
 node_modules/
 .env
+n8n-credentials.env
 .DS_Store
 *.log
+*.ijv

@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd:*)",
+      "Bash(curl:*)",
+      "Bash(python3:*)",
+      "Bash(bash:*)",
+      "Bash(psql:*)",
+      "Bash(printenv:*)",
+      "Bash(__NEW_LINE_aa280c76552fa095__ echo \"=== Test 3: Delivery with LLM \\(English - conversational\\) ===\")",
+      "Bash(__NEW_LINE_9f170b93cd16c8a2__ echo \"=== Test 4: Warranty with LLM \\(English - specific question\\) ===\")",
+      "Bash(__NEW_LINE_a668e8aca0eba57f__ echo \"=== Test 5: Complaint with LLM \\(Arabic - emotional\\) ===\")"
+    ]
+  }
+}
