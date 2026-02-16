@@ -59,37 +59,79 @@ If any of these assumptions are wrong or missing, the agent should:
 - **backend/workflows/**  
   `avaya.voice.flow`, `crm.integration.flow`, `n8n.main.workflow`
 
-Example upload command once the user picks a workflow (e.g. `janssen-whatsapp-workflow`):
+Example upload command once the user picks a workflow (e.g. `janssen-whatsapp-workflow`). Use **trimmed payload via stdin** so no duplicate `-api.json` files are created:
 
 ```bash
 cd "WORKSPACE_ROOT/janssen-ai"
 source "../.cursor/skills/upload-n8n-workflows/n8n-credentials.env"
-curl -sS -X POST \
+python3 -c "
+import json, sys
+w = json.load(open('n8n/janssen-whatsapp-workflow.json'))
+body = {'name': w['name'], 'nodes': w['nodes'], 'connections': w['connections'], 'settings': w.get('settings', {})}
+json.dump(body, sys.stdout)
+" | curl -sS -X POST \
   -H "X-N8N-API-KEY: $N8N_API_KEY" \
   -H "Content-Type: application/json" \
-  -d @n8n/janssen-whatsapp-workflow.json \
-  "$N8N_BASE_URL/rest/workflows"
+  -d @- \
+  "$N8N_BASE_URL/api/v1/workflows"
 ```
 
-(Replace the path with the chosen workflow file; `WORKSPACE_ROOT` is the workspace root path.)
+(Replace `n8n/janssen-whatsapp-workflow.json` with the chosen workflow path; use `WORKSPACE_ROOT` for the workspace root.)
 
 ### If credentials do NOT exist
 
 - **Do** go through the credential flow:
   1. Ask the user for:
      - **N8N_BASE_URL** (n8n instance URL, no trailing slash).
-     - **N8N_API_KEY** (from n8n: Settings → Personal Access Tokens).
-  2. Suggest they create or fill `.cursor/skills/upload-n8n-workflows/n8n-credentials.env` with:
+     - **N8N_API_KEY** (from n8n: Settings → n8n API → Create an API Key → copy the key; you will not see it again).
+  2. **How to get the API key**: Open n8n in the browser → **Settings** (gear or sidebar) → **n8n API** → **Create an API Key** → set Label (e.g. `Workflow Import`), optional Expiration → **Save** → **copy the key** from the dialog → **Done**.
+  3. Suggest they create or fill `.cursor/skills/upload-n8n-workflows/n8n-credentials.env` with:
      - `N8N_BASE_URL="https://YOUR-N8N-URL"`
      - `N8N_API_KEY="YOUR_API_KEY"`
-  3. Tell them to re-run the skill once the file is in place; then the agent will only ask for the workflow name and upload.
+  4. Tell them to re-run the skill once the file is in place; then the agent will only ask for the workflow name and upload.
 - Do **not** paste or log the API key; only refer to the env file and variable names.
+
+---
+
+## Prepare workflow JSON for the API (if 400)
+
+The n8n create-workflow API may accept only certain fields. A full export can include `meta`, `staticData`, etc., which can cause **400 – "must NOT have additional properties"**.
+
+**If the API returns 400**, use a payload that contains only:
+
+- `name`
+- `nodes`
+- `connections`
+- `settings` (optional)
+
+**Do not create `-api.json` files in the repo.** Pipe the trimmed JSON straight to curl (no extra files):
+
+```bash
+# Replace WORKFLOW.json with the path (e.g. n8n/janssen-whatsapp-workflow.json)
+python3 -c "
+import json, sys
+w = json.load(open(sys.argv[1]))
+body = {'name': w['name'], 'nodes': w['nodes'], 'connections': w['connections'], 'settings': w.get('settings', {})}
+json.dump(body, sys.stdout)
+" WORKFLOW.json | curl -sS -X POST \
+  -H "X-N8N-API-KEY: \$N8N_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d @- \
+  "\$N8N_BASE_URL/api/v1/workflows"
+```
+
+(Source the credentials file first so `$N8N_API_KEY` and `$N8N_BASE_URL` are set.)
 
 ---
 
 ## n8n API Basics (for this skill)
 
-Use n8n's REST endpoints with the `X-N8N-API-KEY` header:
+Use n8n's REST endpoints with the `X-N8N-API-KEY` header. **API path varies by n8n version**:
+
+- **`/rest/workflows`** – common in many self-hosted/cloud instances.
+- **`/api/v1/workflows`** – used in some versions.
+
+Try `$N8N_BASE_URL/rest/workflows` first. If you get **404** or **401** (Unauthorized), try `$N8N_BASE_URL/api/v1/workflows` for create/list—some n8n instances use only the v1 path.
 
 ```bash
 curl -sS \
@@ -119,7 +161,17 @@ curl -sS -X POST \
 
 If this endpoint or payload shape fails, the agent should:
 - Show the error response.
+- If **400** (e.g. "must NOT have additional properties"): use the trimmed payload from **"Prepare workflow JSON for the API (if 400)"** above.
+- If **404**: try the other path (`/api/v1/workflows` or `/rest/workflows`).
 - Suggest checking the current n8n API docs for the user's version.
+
+---
+
+## Verify in the UI (optional after upload)
+
+1. Open **`$N8N_BASE_URL/home/workflows`** (e.g. `http://72.60.38.137:5678/home/workflows`).
+2. Find the workflow by **name** in the list (e.g. "Last updated just now").
+3. Click it to open in the editor, then run or edit as needed.
 
 ---
 
@@ -137,19 +189,31 @@ When the user asks to upload/init Janssen workflows to n8n:
 
 ### Batch upload (only when user explicitly requests it)
 
+Use **`/api/v1/workflows`** (many instances return 401 on `/rest/workflows`). The v1 API often rejects full exports with 400; use **API-trimmed** payloads (only `name`, `nodes`, `connections`, `settings`).
+
+**Upload all from `n8n/`** (trim in memory, pipe to curl — **no `-api.json` files**):
+
 ```bash
 cd janssen-ai
 source "../.cursor/skills/upload-n8n-workflows/n8n-credentials.env"
-for file in n8n/*.json backend/workflows/*.json; do
-  echo "Uploading $file ..."
-  curl -sS -X POST \
+for f in n8n/*.json; do
+  [[ "$f" == *-api.json ]] && continue
+  echo "Uploading $f ..."
+  python3 -c "
+import json, sys
+w = json.load(open('$f'))
+body = {'name': w['name'], 'nodes': w['nodes'], 'connections': w['connections'], 'settings': w.get('settings', {})}
+json.dump(body, sys.stdout)
+" | curl -sS -X POST \
     -H "X-N8N-API-KEY: $N8N_API_KEY" \
     -H "Content-Type: application/json" \
-    -d @"$file" \
-    "$N8N_BASE_URL/rest/workflows"
+    -d @- \
+    "$N8N_BASE_URL/api/v1/workflows"
   echo ""
 done
 ```
+
+If your instance uses **`/rest/workflows`** and accepts full JSON (no 401/400), you can POST files directly with `-d @"$file"` and `$N8N_BASE_URL/rest/workflows` instead.
 
 ### Activating Workflows
 
@@ -176,9 +240,10 @@ When curl requests fail, the agent should:
 
 1. **Show the HTTP status and body** to the user.  
 2. Interpret common issues:
-   - `401` / `403`: likely API key issue or missing permissions.
-   - `404`: wrong base URL, path, or n8n version mismatch.
-   - `4xx` with JSON validation error: workflow JSON might be incompatible with this n8n version.
+   - `401` / `403`: invalid or missing API key; check `X-N8N-API-KEY` and that the key was copied correctly.
+   - `400`: invalid body (e.g. extra properties). Use the trimmed payload from **"Prepare workflow JSON for the API (if 400)"** (only `name`, `nodes`, `connections`, `settings`).
+   - `404`: wrong base URL, path, or n8n version; try the other API path (`/rest/workflows` vs `/api/v1/workflows`).
+   - Other `4xx` with JSON validation: workflow JSON might be incompatible with this n8n version.
 3. Suggest corrective actions:
    - Re-check `N8N_BASE_URL` and `N8N_API_KEY`.
    - Confirm the user's n8n version and consult that version's API docs.
@@ -222,3 +287,14 @@ Agent:
 
 User: "Upload all Janssen workflows to n8n."
 Agent: If credentials exist, asks to confirm "all" (or runs the batch loop). If credentials are missing, runs the credential flow first.
+
+---
+
+## Quick reference (import via API)
+
+| Step            | What to do |
+|-----------------|------------|
+| 1. Get API key  | n8n → Settings → n8n API → Create an API Key → copy key |
+| 2. Prepare JSON | If API returns 400, use only `name`, `nodes`, `connections`, `settings` (see "Prepare workflow JSON for the API (if 400)") |
+| 3. Create       | `curl -X POST "$N8N_BASE_URL/rest/workflows" -H "X-N8N-API-KEY: $N8N_API_KEY" -H "Content-Type: application/json" -d @file.json` (or `/api/v1/workflows` if 404 on rest) |
+| 4. Verify       | Open `$N8N_BASE_URL/home/workflows` and open the new workflow by name |
