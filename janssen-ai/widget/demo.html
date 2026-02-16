@@ -436,10 +436,8 @@
 
   <!-- JANSSEN AI CHAT WIDGET -->
   <script>
-    // Use local backend API for development, n8n webhook for production
-    window.JANSSEN_WEBHOOK_URL = window.location.hostname === 'localhost'
-      ? 'http://localhost:3000/api/message'
-      : 'https://n8n-2-7fw9.onrender.com/webhook/janssen-ai-incoming';
+    // Point to n8n webhook for AI processing
+    window.JANSSEN_WEBHOOK_URL = 'http://localhost:5678/webhook/janssen/ai/inbound';
   </script>
   <link rel="stylesheet" href="/widget/styles.css">
   <script src="/widget/widget.js"></script>

@@ -387,6 +387,11 @@
         <div class="stat-label">Avg Confidence</div>
         <div class="stat-value" id="stat-confidence">--</div>
       </div>
+      <div class="stat-card" style="border-left: 3px solid #10b981;">
+        <div class="stat-label">Leads Captured</div>
+        <div class="stat-value" id="stat-leads">--</div>
+        <div class="stat-change up" id="stat-leads-change"></div>
+      </div>
     </div>
 
     <!-- Charts Grid -->
@@ -483,8 +488,16 @@
           data.summary.escalation_rate || '--';
         document.getElementById('stat-confidence').textContent = 
           data.summary.avg_confidence || '--';
-        document.getElementById('stat-total-change').textContent = 
+        document.getElementById('stat-total-change').textContent =
           `+${data.summary.today || 0} today`;
+      }
+
+      // Leads stats
+      if (data.leads) {
+        document.getElementById('stat-leads').textContent =
+          data.leads.total?.toLocaleString() || '0';
+        document.getElementById('stat-leads-change').textContent =
+          `+${data.leads.today || 0} today`;
       }
 
       // Intent chart
@@ -516,8 +529,8 @@
           data.by_channel.voice?.toLocaleString() || '0';
       }
 
-      // Demo activity
-      renderActivity();
+      // Recent activity (real data from API)
+      renderActivity(data.recent_activity);
     }
 
     function renderBarChart(containerId, items) {
@@ -535,25 +548,52 @@
       `).join('');
     }
 
-    function renderActivity() {
-      const activities = [
-        { icon: '💰', type: 'sales', title: 'Price inquiry - Orthopedic', meta: 'Chat • Arabic', time: '2 min ago' },
-        { icon: '📦', type: 'support', title: 'Delivery question - Cairo', meta: 'WhatsApp • Arabic', time: '5 min ago' },
-        { icon: '⚠️', type: 'escalation', title: 'Customer requested human', meta: 'Chat • English', time: '12 min ago' },
-        { icon: '🛡️', type: 'support', title: 'Warranty information', meta: 'Chat • Arabic', time: '18 min ago' },
-        { icon: '😤', type: 'complaint', title: 'Product complaint - escalated', meta: 'WhatsApp • Arabic', time: '25 min ago' }
-      ];
+    function timeAgo(dateStr) {
+      if (!dateStr) return '';
+      const now = new Date();
+      const date = new Date(dateStr);
+      const seconds = Math.floor((now - date) / 1000);
+      if (seconds < 60) return 'just now';
+      const minutes = Math.floor(seconds / 60);
+      if (minutes < 60) return `${minutes} min ago`;
+      const hours = Math.floor(minutes / 60);
+      if (hours < 24) return `${hours}h ago`;
+      const days = Math.floor(hours / 24);
+      return `${days}d ago`;
+    }
 
-      document.getElementById('activity-list').innerHTML = activities.map(a => `
-        <div class="activity-item">
-          <div class="activity-icon ${a.type}">${a.icon}</div>
-          <div class="activity-content">
-            <div class="activity-title">${a.title}</div>
-            <div class="activity-meta">${a.meta}</div>
+    function renderActivity(activities) {
+      const agentIcons = {
+        sales: '💰', support: '📦', warranty: '🛡️', complaint: '😤', escalation: '⚠️'
+      };
+
+      // Fallback demo data if no real activities
+      if (!activities || activities.length === 0) {
+        activities = [
+          { agent: 'sales', intent: 'SALES_PRICE', channel: 'chat', language: 'ar', message_preview: 'Price inquiry', time: new Date().toISOString() },
+          { agent: 'support', intent: 'DELIVERY', channel: 'chat', language: 'ar', message_preview: 'Delivery question', time: new Date().toISOString() }
+        ];
+      }
+
+      document.getElementById('activity-list').innerHTML = activities.map(a => {
+        const icon = agentIcons[a.agent] || '💬';
+        const agentType = a.agent || 'support';
+        const lang = a.language === 'ar' ? 'Arabic' : 'English';
+        const channel = (a.channel || 'chat').charAt(0).toUpperCase() + (a.channel || 'chat').slice(1);
+        const title = a.message_preview || (a.intent ? a.intent.replace(/_/g, ' ') : 'Message');
+        const escalatedBadge = a.escalated ? ' <span style="color:#ef4444;font-size:11px;">• escalated</span>' : '';
+
+        return `
+          <div class="activity-item">
+            <div class="activity-icon ${agentType}">${icon}</div>
+            <div class="activity-content">
+              <div class="activity-title">${title}${escalatedBadge}</div>
+              <div class="activity-meta">${channel} • ${lang} • ${agentType}</div>
+            </div>
+            <div class="activity-time">${timeAgo(a.time)}</div>
           </div>
-          <div class="activity-time">${a.time}</div>
-        </div>
-      `).join('');
+        `;
+      }).join('');
     }
 
     function showDemoData() {
@@ -584,7 +624,15 @@
           chat: 812,
           whatsapp: 398,
           voice: 37
-        }
+        },
+        recent_activity: [
+          { agent: 'sales', intent: 'SALES_PRICE', channel: 'chat', language: 'ar', message_preview: 'بكام المرتبة الاورثوبيديك؟', time: new Date(Date.now() - 2*60000).toISOString() },
+          { agent: 'support', intent: 'DELIVERY', channel: 'whatsapp', language: 'ar', message_preview: 'التوصيل بكام للاسكندرية؟', time: new Date(Date.now() - 5*60000).toISOString() },
+          { agent: 'escalation', intent: 'HUMAN_REQUEST', channel: 'chat', language: 'en', escalated: true, message_preview: 'I want to speak to a human', time: new Date(Date.now() - 12*60000).toISOString() },
+          { agent: 'warranty', intent: 'WARRANTY', channel: 'chat', language: 'ar', message_preview: 'الضمان بتاع المرتبة كام سنة؟', time: new Date(Date.now() - 18*60000).toISOString() },
+          { agent: 'complaint', intent: 'COMPLAINT', channel: 'whatsapp', language: 'ar', escalated: true, message_preview: 'المرتبة وصلت بعيب', time: new Date(Date.now() - 25*60000).toISOString() }
+        ],
+        leads: { total: 34, today: 5, by_interest_level: { hot: 12, warm: 15, cold: 7 } }
       });
     }
 

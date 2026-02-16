@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(chmod:*)",
+      "Bash(npm install:*)",
+      "Bash(psql:*)",
+      "Bash(pg_isready:*)",
+      "Bash(createdb:*)",
+      "Bash(echo \"\"; echo \"=== 2. Agents List ===\"; curl -s http://localhost:3000/api/agents | python3 -m json.tool)",
+      "Bash(echo \"\"; echo \"=== 3. Arabic Price Inquiry ===\"; curl -s -X POST http://localhost:3000/api/message -H \"Content-Type: application/json\" -d '{\"session_id\":\"test_1\",\"user_message\":\"بكام المرتبة الأورثوبيديك\",\"channel\":\"chat\",\"language\":\"ar\"}' | python3 -m json.tool)",
+      "Bash(echo \"\"; echo \"=== 4. English Greeting ===\"; curl -s -X POST http://localhost:3000/api/message -H \"Content-Type: application/json\" -d '{\"session_id\":\"test_2\",\"user_message\":\"Hello, how are you?\",\"channel\":\"chat\",\"language\":\"en\"}' | python3 -m json.tool)",
+      "Bash(echo \"\"; echo \"=== 5. Delivery Inquiry ===\"; curl -s -X POST http://localhost:3000/api/message -H \"Content-Type: application/json\" -d '{\"session_id\":\"test_3\",\"user_message\":\"عايز اعرف مواعيد التوصيل\",\"channel\":\"chat\",\"language\":\"ar\"}' | python3 -m json.tool)",
+      "Bash(echo \"\"; echo \"=== 6. Store Info ===\"; curl -s -X POST http://localhost:3000/api/message -H \"Content-Type: application/json\" -d '{\"session_id\":\"test_4\",\"user_message\":\"فين الفرع\",\"channel\":\"chat\",\"language\":\"ar\"}' | python3 -m json.tool)",
+      "Bash(echo \"\"; echo \"=== 7. Complaint ===\"; curl -s -X POST http://localhost:3000/api/message -H \"Content-Type: application/json\" -d '{\"session_id\":\"test_5\",\"user_message\":\"عندي شكوى في المرتبة\",\"channel\":\"chat\",\"language\":\"ar\"}' | python3 -m json.tool)",
+      "Bash(echo \"\"; echo \"=== 8. Escalation ===\"; curl -s -X POST http://localhost:3000/api/message -H \"Content-Type: application/json\" -d '{\"session_id\":\"test_6\",\"user_message\":\"عايز اتكلم مع حد\",\"channel\":\"chat\",\"language\":\"ar\"}' | python3 -m json.tool)",
+      "Bash(echo \"\"; echo \"=== 9. Products List ===\"; curl -s http://localhost:3000/api/products | python3 -m json.tool)",
+      "Bash(python3:*)",
+      "Bash(pkill:*)",
+      "Bash(git status:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nFix bugs, complete missing features, and prepare for deployment\n\n- Fix graceful DB fallback \\(app no longer crashes without PostgreSQL\\)\n- Add DATABASE_URL support for Render/Heroku deployments\n- Add global error handler middleware\n- Add /api/stats endpoint for analytics dashboard\n- Add GREETING and STORE_INFO intent detection and responses\n- Add seed data \\(10 products, 10 prices, 6 delivery regions\\)\n- Fix RTL message alignment in chat widget\n- Fix CSS toggle-icon class mismatch\n- Fix newline rendering in bot messages \\(escapeHtml → formatMessage\\)\n- Fix dashboard to use local /api/stats when running locally\n- Fix test.html missing session_id in payload\n- Add .gitignore, Dockerfile, render.yaml, .dockerignore\n- Add database setup script \\(scripts/setup-db.sh\\)\n- All 47 API tests passing, widget + dashboard verified in browser\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(render:*)",
+      "Bash(node:*)",
+      "Bash(lsof:*)",
+      "Bash(xargs kill:*)",
+      "Bash(curl:*)"
+    ]
+  }
+}
