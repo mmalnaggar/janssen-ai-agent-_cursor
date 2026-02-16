@@ -1,0 +1,13 @@
+# Environment and credentials — never commit
+.env
+.env.local
+.env.*.local
+*.env
+!*.env.example
+n8n-credentials.env
+
+# OS and editor
+.DS_Store
+*.log
+*.swp
+*.swo
